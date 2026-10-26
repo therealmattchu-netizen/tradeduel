@@ -438,14 +438,24 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
  * This is an activity-ingestion engine, not a token price or P&L oracle. */
 export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() })).handler(async ({ data }) => {
   const { DB, wallet } = await requireSession(data.token);
-  const match = await DB.prepare("SELECT id, player_one, player_two, status, started_at, ends_at, verification_status FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(data.matchId, wallet, wallet).first<{id:string;player_one:string;player_two:string|null;status:string;started_at:string|null;ends_at:string|null;verification_status:string}>();
-  if (!match) throw new Error("Match not found for this wallet.");
+  type SyncMatch = {id:string;player_one:string;player_two:string|null;status:string;started_at:string|null;ends_at:string|null;verification_status:string;custom:boolean;mode?:string;max_players?:number};
+  let match: SyncMatch | null = await DB.prepare("SELECT id, player_one, player_two, status, started_at, ends_at, verification_status FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(data.matchId, wallet, wallet).first<Omit<SyncMatch,"custom">>().then(row=>row?{...row,custom:false}:null);
+  let participants: string[] = [];
+  if (!match) {
+    const custom = await DB.prepare("SELECT id,status,started_at,ends_at,mode,max_players FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string;started_at:string|null;ends_at:string|null;mode:string;max_players:number}>();
+    const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
+    if (!custom || !member) throw new Error("Match not found for this wallet.");
+    if (!custom.started_at || custom.status === "open") throw new Error("This custom match has not started yet. Activity indexing begins when every slot is filled.");
+    const members = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string}>();
+    participants = [...new Set((members.results??[]).map(row=>row.wallet))];
+    match = {id:custom.id,player_one:participants[0]??wallet,player_two:participants[1]??null,status:custom.status,started_at:custom.started_at,ends_at:custom.ends_at,verification_status:"unverified",custom:true,mode:custom.mode,max_players:custom.max_players};
+  }
   const rpcCall = async (method:string, params:unknown[]): Promise<any> => await solanaRpcCall(method, params) as any;
   const start = match.started_at ? Math.floor(new Date(match.started_at).getTime()/1000) : 0;
   const end = match.ends_at ? Math.floor(new Date(match.ends_at).getTime()/1000) : Math.floor(Date.now()/1000);
   let indexed = 0;
   let indexingErrors = 0;
-  const participants = [...new Set([match.player_one, match.player_two].filter((address): address is string => Boolean(address)))];
+  if (!participants.length) participants = [...new Set([match.player_one, match.player_two].filter((address): address is string => Boolean(address)))];
   for (const trackedWallet of participants) {
   // Page signatures from a durable cursor and queue them before processing. This
   // prevents the old fixed-latest-100 scan from permanently missing older match activity.
