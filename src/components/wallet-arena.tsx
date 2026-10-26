@@ -264,10 +264,17 @@ export function WalletArena() {
               : "Phantom's provider was not detected in this browser. Enable/install the Phantom extension, then reload TradeDuel.");
             return;
           }
-          if (!choice.provider && !choice.standardWallet && choice.name === "Backpack") {
+          if (choice.name === "Backpack" && !choice.provider && !choice.standardWallet) {
             window.open("https://backpack.app/", "_blank", "noopener,noreferrer");
-            setNotice("Install Backpack, then return and reload this page to connect it.");
+            setNotice("Backpack's provider was not detected. Open or install Backpack, then reload TradeDuel.");
             return;
+          }
+          if (choice.name === "Backpack" && choice.provider) {
+            const provider = choice.provider;
+            if (provider.isBackpack === false || provider.isPhantom === true || provider.isSolflare === true) {
+              setNotice("The injected provider does not identify itself as Backpack. TradeDuel blocked it to avoid opening the wrong wallet.");
+              return;
+            }
           }
           void connectWallet(choice);
         }} disabled={busy}>{choice.name}{!choice.provider && !choice.standardWallet && (choice.name === "Backpack" || choice.name === "Phantom") ? " · Install / reload" : ""}<span style={{ float: "right" }}>↗</span></button>)}</div> : <p style={{ fontSize: "13px", color: "#b9b5ca" }}>No compatible wallet was detected in this browser.</p>}
