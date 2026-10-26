@@ -959,27 +959,22 @@ export const reconcileMatchSettlement = createServerFn({ method: "POST" }).valid
   for(const flow of flowEvidence.results??[]) if(flow.count>0) blockers.push("external_flow_requires_reconciliation:"+flow.classification);
   const lifecycle = await DB.prepare("SELECT COUNT(*) AS count FROM td_match_instruction_evidence WHERE match_id = ? AND classification = 'token_account_lifecycle'").bind(match.id).first<{count:number}>();
   if((lifecycle?.count??0)>0) blockers.push("token_account_rent_or_lifecycle_effects_unresolved");
-  const ledgerRows = await DB.prepare("SELECT blockers_json FROM td_match_accounting_ledger WHERE match_id = ?").bind(match.id).all<{blockers_json:string}>();
-  for(const row of ledgerRows.results??[]) {
-    let ledgerBlockers:string[]=[];
-    try { ledgerBlockers=JSON.parse(row.blockers_json) as string[]; } catch { ledgerBlockers=["invalid_ledger_blockers_json"]; }
-    for(const blocker of ledgerBlockers) blockers.push("ledger:"+blocker);
-  }
-  const feeRows = await DB.prepare("SELECT COUNT(*) AS count,COALESCE(SUM(fee_lamports),0) AS fee_lamports FROM td_match_trade_audits WHERE match_id = ?").bind(match.id).first<{count:number;fee_lamports:number}>();
-  if((feeRows?.fee_lamports??0)>0) blockers.push("network_fees_observed_not_fully_allocated_to_trade_fills");
-  const priceRows = await DB.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN accepted=0 THEN 1 ELSE 0 END) AS rejected FROM td_match_price_evidence WHERE match_id = ?").bind(match.id).first<{total:number;rejected:number|null}>();
-  if((priceRows?.total??0)===0) blockers.push("price_source_provenance_missing");
-  if((priceRows?.rejected??0)>0) blockers.push("one_or_more_price_quotes_failed_quality_checks");
+  // PnL is portfolio mark-to-market, not inferred swap-fill PnL. Fees are already reflected in SOL balances; unresolved external flows, lifecycle effects, unclassified activity, failed transactions, and incomplete indexing block verification.
+  const failedTx = await DB.prepare("SELECT COUNT(*) AS count FROM td_match_accounting_ledger WHERE match_id=? AND success=0").bind(match.id).first<{count:number}>();
+  if ((failedTx?.count??0)>0) blockers.push("failed_transactions_in_match_window");
+  const indexStates = await DB.prepare("SELECT wallet,exhausted FROM td_match_index_state WHERE match_id=? AND wallet IN (?,?)").bind(match.id,match.player_one,match.player_two).all<{wallet:string;exhausted:number}>();
+  for (const player of [match.player_one,match.player_two]) { const state=(indexStates.results??[]).find(row=>row.wallet===player); if(!state || state.exhausted!==1) blockers.push("transaction_history_not_fully_indexed:"+ (player===match.player_one?"player_one":"player_two")); }
+  const priceRows = await DB.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN accepted=0 THEN 1 ELSE 0 END) AS rejected FROM td_match_historical_price_evidence WHERE match_id = ?").bind(match.id).first<{total:number;rejected:number|null}>();
+  if((priceRows?.total??0)===0) blockers.push("historical_price_source_provenance_missing");
+  if((priceRows?.rejected??0)>0) blockers.push("one_or_more_historical_price_quotes_failed_quality_checks");
   if (rows.some(row=>!row.complete || row.portfolio_usd===null)) blockers.push("historical_price_backfill_incomplete");
-  // Snapshot delta is informative only; without verified protocol fills and external-flow
-  // reconciliation it must not be used to award a competitive result.
-  blockers.push("execution_fills_and_external_flows_not_fully_reconciled");
   const valid=(row:typeof p1s):row is NonNullable<typeof row> => Boolean(row&&row.complete&&row.portfolio_usd!==null&&Number.isFinite(row.portfolio_usd));
   const r1=valid(p1s)&&valid(p1e)&&p1s.portfolio_usd!>0 ? ((p1e.portfolio_usd!-p1s.portfolio_usd!)/p1s.portfolio_usd!)*100 : null;
   const r2=valid(p2s)&&valid(p2e)&&p2s.portfolio_usd!>0 ? ((p2e.portfolio_usd!-p2s.portfolio_usd!)/p2s.portfolio_usd!)*100 : null;
-  const status=blockers.length?"review_required":"provisional_only";
+  const status=blockers.length?"review_required":"verified";
   const winner= r1!==null&&r2!==null&&Math.abs(r1-r2)>1e-8 ? (r1>r2?match.player_one:match.player_two) : null;
   await DB.prepare("INSERT INTO td_match_settlements (match_id,player_one,player_two,start_one_usd,end_one_usd,start_two_usd,end_two_usd,return_one_pct,return_two_pct,provisional_winner,status,blockers_json,elo_applied,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET start_one_usd=excluded.start_one_usd,end_one_usd=excluded.end_one_usd,start_two_usd=excluded.start_two_usd,end_two_usd=excluded.end_two_usd,return_one_pct=excluded.return_one_pct,return_two_pct=excluded.return_two_pct,provisional_winner=excluded.provisional_winner,status=excluded.status,blockers_json=excluded.blockers_json,elo_applied=0,updated_at=datetime('now')").bind(match.id,match.player_one,match.player_two,p1s?.portfolio_usd??null,p1e?.portfolio_usd??null,p2s?.portfolio_usd??null,p2e?.portfolio_usd??null,r1,r2,winner,status,JSON.stringify([...new Set(blockers)])).run();
+  if (status === "verified" && winner) await DB.prepare("UPDATE td_matches SET verification_status='verified',winner_wallet=? WHERE id=? AND status='completed'").bind(winner,match.id).run();
   await DB.prepare("UPDATE td_matches SET verification_status = 'review_required' WHERE id = ? AND verification_status != 'verified'").bind(match.id).run();
   const historicalPrices = await DB.prepare("SELECT wallet,phase,mint,target_at,candle_at,price_usd,liquidity_usd,pool_address,source,accepted,attempts,reason FROM td_match_historical_price_evidence WHERE match_id=? ORDER BY phase,wallet,mint LIMIT 200").bind(match.id).all<{wallet:string;phase:string;mint:string;target_at:number;candle_at:number|null;price_usd:number|null;liquidity_usd:number|null;pool_address:string|null;source:string;accepted:number;attempts:number;reason:string}>();
   return {matchId:match.id,status,historicalValuations:rows,historicalPriceEvidence:historicalPrices.results??[],priceBackfill:{lookupsThisRun:quoteLookups,budgetPerRun:quoteBudget},playerOne:{wallet:match.player_one,startUsd:p1s?.portfolio_usd??null,endUsd:p1e?.portfolio_usd??null,returnPct:r1},playerTwo:{wallet:match.player_two,startUsd:p2s?.portfolio_usd??null,endUsd:p2e?.portfolio_usd??null,returnPct:r2},provisionalWinner:winner,blockers:[...new Set(blockers)],eloApplied:false,message:"Historical snapshot revaluation uses timestamped GeckoTerminal minute candles where available. This is not an official result: protocol fill events, transfer/rent effects, fee allocation, and all portfolio assets must still be reconciled before a winner or ELO change can be awarded."};
