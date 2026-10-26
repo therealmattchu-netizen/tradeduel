@@ -33,7 +33,6 @@ type SolanaWalletProvider = {
   isPhantom?: boolean;
   isSolflare?: boolean;
   isBackpack?: boolean;
-  isGlow?: boolean;
   publicKey?: { toString(): string };
   connect: (options?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey?: { toString(): string } } | void>;
   disconnect?: () => Promise<void>;
@@ -45,7 +44,6 @@ declare global {
     phantom?: { solana?: SolanaWalletProvider };
     solflare?: SolanaWalletProvider;
     backpack?: { solana?: SolanaWalletProvider } | SolanaWalletProvider;
-    glow?: SolanaWalletProvider;
   }
 }
 type WalletChoice = { name: string; provider?: SolanaWalletProvider; standardWallet?: StandardWallet };
@@ -56,7 +54,6 @@ function getWalletChoices(): WalletChoice[] {
     { name: "Phantom", provider: window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : undefined) },
     { name: "Solflare", provider: window.solflare ?? (window.solana?.isSolflare ? window.solana : undefined) },
     { name: "Backpack", provider: (window.backpack && "solana" in window.backpack ? window.backpack.solana : window.backpack as SolanaWalletProvider | undefined) ?? (window.solana?.isBackpack ? window.solana : undefined) },
-    { name: "Glow", provider: window.glow ?? (window.solana?.isGlow ? window.solana : undefined) },
   ];
   const seenProviders: SolanaWalletProvider[] = [];
   for (const candidate of candidates) {
@@ -213,7 +210,6 @@ export function WalletArena() {
             <a href="https://phantom.app/" target="_blank" rel="noreferrer">Phantom ↗</a>
             <a href="https://solflare.com/" target="_blank" rel="noreferrer">Solflare ↗</a>
             <a href="https://backpack.app/" target="_blank" rel="noreferrer">Backpack ↗</a>
-            <a href="https://glow.app/" target="_blank" rel="noreferrer">Glow ↗</a>
           </div>
         </div>
       </div>
@@ -229,16 +225,13 @@ export function WalletArena() {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "10px", marginTop: "8px" }}>
         <a href="https://help.phantom.com/articles/import-your-privy-fomo-pump-fun-wallet-into-phantom-41408635409683" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
-          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Import to Phantom ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official Pump.fun wallet import walkthrough</span>
+          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Phantom ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official Pump.fun wallet import walkthrough</span>
         </a>
         <a href="https://help.solflare.com/en/articles/6134229-how-to-import-your-solana-wallet-into-solflare-using-a-private-key-desktop" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
-          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Import to Solflare ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official Solflare private-key import guide</span>
+          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Solflare ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official private-key import instructions</span>
         </a>
-        <a href="https://help.phantom.com/articles/28355310978067" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
-          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>More Phantom import options ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official guide for adding an existing account</span>
-        </a>
-        <a href="https://www.solflare.com/guides/how-to-export-and-import-wallets-in-solflare/" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
-          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Solflare wallet guide ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official export and import overview</span>
+        <a href="https://support.backpack.exchange/wallet/get-started/import-recover-wallet" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
+          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Backpack ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official guide to importing or recovering a wallet</span>
         </a>
       </div>
       <div style={{ marginTop: "14px", padding: "11px 12px", borderRadius: "10px", background: "rgba(245, 158, 11, 0.08)", border: "1px solid rgba(245, 158, 11, 0.22)" }}>
