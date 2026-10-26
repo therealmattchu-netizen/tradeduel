@@ -23,6 +23,8 @@ export function MatchChat({ matchId, wallet, spectator = false }: { matchId: str
       const result = await getMatchChatMessages({ data: { token, matchId, afterId: initial ? 0 : latestId.current } });
       const incoming = result.messages as ChatMessage[];
       if (incoming.length) {
+        const hasNewOtherPlayerMessage = incoming.some((message) => message.wallet !== wallet);
+        if (!initial && hasNewOtherPlayerMessage) window.dispatchEvent(new CustomEvent("tradeduel:chat-message"));
         latestId.current = Math.max(latestId.current, ...incoming.map((message) => message.id));
         setMessages((previous) => {
           const byId = new Map(previous.map((message) => [message.id, message]));
