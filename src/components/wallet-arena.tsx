@@ -2,6 +2,33 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { createWalletChallenge, getMyMatches, getQueueStatus, joinMatchmakingQueue, leaveMatchmakingQueue, verifyWalletChallenge } from "@/lib/api/arena.functions";
 
+type StandardWallet = {
+  name: string;
+  icon?: string;
+  features: Record<string, any>;
+};
+declare global {
+  interface Window {
+    __tdStandardWallets?: StandardWallet[];
+  }
+}
+function discoverStandardWallets(): StandardWallet[] {
+  if (typeof window === "undefined") return [];
+  if (!window.__tdStandardWallets) {
+    window.__tdStandardWallets = [];
+    const register = (wallet: StandardWallet) => {
+      if (wallet && !window.__tdStandardWallets!.some((item) => item.name === wallet.name)) {
+        window.__tdStandardWallets!.push(wallet);
+      }
+    };
+    window.addEventListener("wallet-standard:register-wallet", ((event: Event) => {
+      const callback = (event as CustomEvent).detail;
+      if (typeof callback === "function") callback(register);
+    }) as EventListener);
+    window.dispatchEvent(new Event("wallet-standard:app-ready"));
+  }
+  return window.__tdStandardWallets;
+}
 type SolanaWalletProvider = {
   isPhantom?: boolean;
   isSolflare?: boolean;
@@ -56,7 +83,7 @@ export function WalletArena() {
   const [isWalletProviderAvailable, setIsWalletProviderAvailable] = useState<boolean | null>(null);
 
   useEffect(() => {
-    setIsWalletProviderAvailable(Boolean(getWalletProvider()));
+    setIsWalletProviderAvailable(Boolean(getWalletProvider()) || discoverStandardWallets().some((item) => item.features["standard:connect"] && item.features["solana:signMessage"]));
     const savedToken = window.sessionStorage.getItem(TOKEN_KEY) || "";
     const savedWallet = window.sessionStorage.getItem(WALLET_KEY) || "";
     if (savedToken && savedWallet) { setToken(savedToken); setWallet(savedWallet); setNotice("Wallet session restored in this tab."); }
@@ -92,18 +119,47 @@ export function WalletArena() {
   const connect = async () => {
     setBusy(true); setNotice("Waiting for wallet approval…");
     try {
+      let publicKey = "";
+      let signature: Uint8Array | null = null;
+      let providerName = "";
       const selected = getWalletProvider();
-      if (!selected) throw new Error("No compatible Solana wallet was detected. Install a supported wallet or use address verification below.");
-      const provider = selected.provider;
-      const connected = await provider.connect();
-      const publicKey = (connected && "publicKey" in connected ? connected.publicKey : undefined)?.toString() ?? provider.publicKey?.toString();
-      if (!publicKey) throw new Error("The wallet did not return a public address. Disconnect and try again.");
-      const challenge = await createWalletChallenge({ data: { wallet: publicKey } });
-      const signed = await provider.signMessage(new TextEncoder().encode(challenge.message), "utf8");
-      const signature = signed instanceof Uint8Array ? signed : signed.signature;
-      const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
-      window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
-      setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(selected.name); setNotice("Wallet ownership verified. No transaction was sent.");
+      if (selected) {
+        const provider = selected.provider;
+        const connected = await provider.connect();
+        publicKey = (connected && "publicKey" in connected ? connected.publicKey : undefined)?.toString() ?? provider.publicKey?.toString() ?? "";
+        if (!publicKey) throw new Error("The wallet did not return a public address. Disconnect and try again.");
+        const challenge = await createWalletChallenge({ data: { wallet: publicKey } });
+        const signed = await provider.signMessage(new TextEncoder().encode(challenge.message), "utf8");
+        signature = signed instanceof Uint8Array ? signed : signed.signature;
+        providerName = selected.name;
+        const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
+        window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
+        setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(providerName); setNotice("Wallet ownership verified. No transaction was sent.");
+        return;
+      }
+
+      // Wallet Standard discovery covers compatible wallets that don't expose
+      // a legacy window.solana provider. It cannot add support to wallets that
+      // do not publish a signing feature.
+      const standardWallets = discoverStandardWallets();
+      for (const candidate of standardWallets) {
+        const connectFeature = candidate.features["standard:connect"];
+        const signFeature = candidate.features["solana:signMessage"];
+        if (!connectFeature?.connect || !signFeature?.signMessage) continue;
+        const connected = await connectFeature.connect();
+        const account = connected?.accounts?.find((item: any) => item?.chains?.some((chain: string) => chain.startsWith("solana:"))) ?? connected?.accounts?.[0];
+        if (!account?.address) continue;
+        publicKey = account.address;
+        const challenge = await createWalletChallenge({ data: { wallet: publicKey } });
+        const signedResults = await signFeature.signMessage({ account, message: new TextEncoder().encode(challenge.message) });
+        signature = signedResults?.[0]?.signature;
+        if (!signature) throw new Error("The selected wallet did not return a message signature.");
+        const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
+        window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
+        setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(candidate.name || "Solana wallet"); setNotice("Wallet ownership verified. No transaction was sent.");
+        return;
+      }
+      throw new Error("No compatible Solana wallet with message signing was detected. This page now supports Wallet Standard wallets too, but the wallet must expose signing. A public address alone cannot prove ownership.");
     } catch (e) { setNotice(e instanceof Error ? e.message : "Wallet connection failed. Try again."); }
     finally { setBusy(false); }
   };
