@@ -210,9 +210,19 @@ export function SiteAudio() {
 
   useEffect(() => {
     const onMatchFound = () => playMatchFound();
+    const onChatMessage = () => {
+      if (!prefsRef.current.effects) return;
+      // Quiet, short two-tone notification for incoming opponent chat.
+      playTone(660, 0.07, 0.045, "triangle", 590);
+      window.setTimeout(() => playTone(880, 0.09, 0.04, "sine", 760), 75);
+    };
     window.addEventListener("tradeduel:match-found", onMatchFound);
-    return () => window.removeEventListener("tradeduel:match-found", onMatchFound);
-  }, [playMatchFound]);
+    window.addEventListener("tradeduel:chat-message", onChatMessage);
+    return () => {
+      window.removeEventListener("tradeduel:match-found", onMatchFound);
+      window.removeEventListener("tradeduel:chat-message", onChatMessage);
+    };
+  }, [playMatchFound, playTone]);
 
   // Start/resume audio on the first user gesture, then sound route changes.
   useEffect(() => {
