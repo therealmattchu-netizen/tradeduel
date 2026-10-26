@@ -681,3 +681,21 @@ body { margin: 0; background: var(--td-bg); color: var(--td-white); font-family:
   .td-profile-trigger-copy { display:flex; }
   .td-profile-trigger-copy strong { max-width:90px; }
 }
+
+/* Wallet tracker token portfolio additions, aligned to the dark-violet arena UI. */
+.td-tracker-token-summary { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:18px 28px; border-bottom:1px solid var(--td-line); background:linear-gradient(100deg,rgba(166,107,255,.09),rgba(20,17,27,.1)); }
+.td-tracker-token-summary>div { display:grid; gap:7px; }
+.td-tracker-token-summary>div strong { color:#e9d7ff; font-size:20px; letter-spacing:-.03em; }
+.td-tracker-token-summary>small { color:#a69bb3; font-size:11px; }
+.td-token-position { grid-template-columns:72px minmax(0,1fr) auto; align-items:center; }
+.td-token-position>div { min-width:0; }
+.td-token-position>div strong { display:block; color:#f2eaff; overflow-wrap:anywhere; }
+.td-token-position>div small { display:block; margin-top:5px; overflow-wrap:anywhere; }
+.td-token-position>button { padding:7px 9px; border:1px solid #49365e; border-radius:7px; background:rgba(166,107,255,.08); color:#d9c3f4; font-size:10px; cursor:pointer; }
+.td-tracker-panel .td-tracker-disclaimer { margin:12px 24px; color:#9f95aa; font-size:11px; line-height:1.65; }
+@media (max-width:620px) {
+  .td-tracker-token-summary { padding:16px; }
+  .td-token-position { grid-template-columns:64px minmax(0,1fr); }
+  .td-token-position>button { grid-column:2; justify-self:start; }
+  .td-profile-popover { right:-4px; }
+}
