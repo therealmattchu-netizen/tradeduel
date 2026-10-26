@@ -84,7 +84,7 @@ export const createWalletChallenge = createServerFn({ method: "POST" }).validato
   if (!DB) throw new Error("Wallet verification is not configured yet.");
   const nonce = crypto.randomUUID();
   const domain = bindings().TRADEDUEL_WALLET_DOMAIN?.trim().toLowerCase();
-  if (!domain || !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)) {
+  if (!domain || !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)) {
     throw new Error("Wallet verification is not configured for this deployment.");
   }
   const expiresAt = Math.floor(Date.now() / 1000) + 300;
