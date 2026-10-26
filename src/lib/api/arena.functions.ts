@@ -1117,7 +1117,7 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
     const match = await DB.prepare(
-      "SELECT id,status,started_at,ends_at,mode,max_players FROM td_custom_matches WHERE id=?"
+      "SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds FROM td_custom_matches WHERE id=?"
     ).bind(data.matchId).first<{
       id: string; status: string; started_at: string | null; ends_at: string | null;
       mode: string; max_players: number; duration_seconds: number;
