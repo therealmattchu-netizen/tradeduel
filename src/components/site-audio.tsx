@@ -73,6 +73,27 @@ export function SiteAudio() {
     osc.stop(ctx.currentTime + duration + 0.01);
   }, [ensureAudio]);
 
+  const playMatchFound = useCallback(() => {
+    if (!prefsRef.current.effects) return;
+    // A three-note, rising match-confirmation chime.
+    playTone(784, 0.18, 0.14, "sine", 988);
+    window.setTimeout(() => playTone(1046.5, 0.22, 0.14, "sine", 1318.5), 110);
+    window.setTimeout(() => playTone(1568, 0.36, 0.12, "sine", 1760), 230);
+    // Use an installed browser voice so no external audio file is required.
+    if ("speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined") {
+      window.setTimeout(() => {
+        if (!prefsRef.current.effects) return;
+        window.speechSynthesis.cancel();
+        const announcement = new SpeechSynthesisUtterance("Match found.");
+        announcement.lang = "en-CA";
+        announcement.rate = 0.92;
+        announcement.pitch = 1.02;
+        announcement.volume = 0.85;
+        window.speechSynthesis.speak(announcement);
+      }, 420);
+    }
+  }, [playTone]);
+
   const playNavigation = useCallback((kind: "page" | "duel") => {
     if (!prefsRef.current.effects) return;
     if (kind === "duel") {
@@ -186,6 +207,12 @@ export function SiteAudio() {
       if (sequenceTimerRef.current !== null) window.clearTimeout(sequenceTimerRef.current);
     };
   }, [scene, ensureAudio]);
+
+  useEffect(() => {
+    const onMatchFound = () => playMatchFound();
+    window.addEventListener("tradeduel:match-found", onMatchFound);
+    return () => window.removeEventListener("tradeduel:match-found", onMatchFound);
+  }, [playMatchFound]);
 
   // Start/resume audio on the first user gesture, then sound route changes.
   useEffect(() => {
