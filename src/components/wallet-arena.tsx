@@ -48,16 +48,24 @@ declare global {
     glow?: SolanaWalletProvider;
   }
 }
-function getWalletProvider(): { name: string; provider: SolanaWalletProvider } | null {
+type WalletChoice = { name: string; provider?: SolanaWalletProvider; standardWallet?: StandardWallet };
+function getWalletChoices(): WalletChoice[] {
+  if (typeof window === "undefined") return [];
+  const choices: WalletChoice[] = [];
   const candidates: Array<{ name: string; provider?: SolanaWalletProvider }> = [
     { name: "Phantom", provider: window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : undefined) },
     { name: "Solflare", provider: window.solflare ?? (window.solana?.isSolflare ? window.solana : undefined) },
     { name: "Backpack", provider: (window.backpack && "solana" in window.backpack ? window.backpack.solana : window.backpack as SolanaWalletProvider | undefined) ?? (window.solana?.isBackpack ? window.solana : undefined) },
     { name: "Glow", provider: window.glow ?? (window.solana?.isGlow ? window.solana : undefined) },
-    { name: "Compatible Solana wallet", provider: window.solana },
+    { name: "Other Solana wallet", provider: window.solana },
   ];
-  const found = candidates.find((candidate) => candidate.provider?.connect && candidate.provider?.signMessage);
-  return found?.provider ? { name: found.name, provider: found.provider } : null;
+  for (const candidate of candidates) {
+    if (candidate.provider?.connect && candidate.provider?.signMessage && !choices.some((item) => item.name.toLowerCase() === candidate.name.toLowerCase())) choices.push({ name: candidate.name, provider: candidate.provider });
+  }
+  for (const wallet of discoverStandardWallets()) {
+    if (wallet.features["standard:connect"] && wallet.features["solana:signMessage"] && !choices.some((item) => item.name.toLowerCase() === wallet.name.toLowerCase())) choices.push({ name: wallet.name, standardWallet: wallet });
+  }
+  return choices;
 }
 const TOKEN_KEY = "td_session_token";
 const WALLET_KEY = "td_session_wallet";
@@ -76,14 +84,14 @@ export function WalletArena() {
   const [notice, setNotice] = useState("Connect your wallet to enter the matchmaking queue.");
   const [matches, setMatches] = useState<ArenaMatch[]>([]);
   const [walletProviderName, setWalletProviderName] = useState("");
-  const [manualAddress, setManualAddress] = useState("");
-  const [manualChallenge, setManualChallenge] = useState<{ nonce: string; message: string } | null>(null);
-  const [manualSignature, setManualSignature] = useState("");
-  const [manualMode, setManualMode] = useState(false);
   const [isWalletProviderAvailable, setIsWalletProviderAvailable] = useState<boolean | null>(null);
+  const [walletPickerOpen, setWalletPickerOpen] = useState(false);
+  const [walletChoices, setWalletChoices] = useState<WalletChoice[]>([]);
 
   useEffect(() => {
-    setIsWalletProviderAvailable(Boolean(getWalletProvider()) || discoverStandardWallets().some((item) => item.features["standard:connect"] && item.features["solana:signMessage"]));
+    const availableWallets = getWalletChoices();
+    setWalletChoices(availableWallets);
+    setIsWalletProviderAvailable(availableWallets.length > 0);
     const savedToken = window.sessionStorage.getItem(TOKEN_KEY) || "";
     const savedWallet = window.sessionStorage.getItem(WALLET_KEY) || "";
     if (savedToken && savedWallet) { setToken(savedToken); setWallet(savedWallet); setNotice("Wallet session restored in this tab."); }
@@ -116,50 +124,40 @@ export function WalletArena() {
     return () => { alive = false; window.clearInterval(interval); };
   }, [token, queueStatus, loadMatches]);
 
-  const connect = async () => {
-    setBusy(true); setNotice("Waiting for wallet approval…");
+  const connectWallet = async (choice: WalletChoice) => {
+    setWalletPickerOpen(false);
+    setBusy(true); setNotice(`Waiting for ${choice.name} approval…`);
     try {
       let publicKey = "";
       let signature: Uint8Array | null = null;
-      let providerName = "";
-      const selected = getWalletProvider();
-      if (selected) {
-        const provider = selected.provider;
+      if (choice.provider) {
+        const provider = choice.provider;
         const connected = await provider.connect();
         publicKey = (connected && "publicKey" in connected ? connected.publicKey : undefined)?.toString() ?? provider.publicKey?.toString() ?? "";
         if (!publicKey) throw new Error("The wallet did not return a public address. Disconnect and try again.");
         const challenge = await createWalletChallenge({ data: { wallet: publicKey } });
         const signed = await provider.signMessage(new TextEncoder().encode(challenge.message), "utf8");
         signature = signed instanceof Uint8Array ? signed : signed.signature;
-        providerName = selected.name;
         const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
         window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
-        setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(providerName); setNotice("Wallet ownership verified. No transaction was sent.");
+        setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(choice.name); setNotice("Wallet ownership verified. No transaction was sent.");
         return;
       }
-
-      // Wallet Standard discovery covers compatible wallets that don't expose
-      // a legacy window.solana provider. It cannot add support to wallets that
-      // do not publish a signing feature.
-      const standardWallets = discoverStandardWallets();
-      for (const candidate of standardWallets) {
-        const connectFeature = candidate.features["standard:connect"];
-        const signFeature = candidate.features["solana:signMessage"];
-        if (!connectFeature?.connect || !signFeature?.signMessage) continue;
-        const connected = await connectFeature.connect();
-        const account = connected?.accounts?.find((item: any) => item?.chains?.some((chain: string) => chain.startsWith("solana:"))) ?? connected?.accounts?.[0];
-        if (!account?.address) continue;
-        publicKey = account.address;
-        const challenge = await createWalletChallenge({ data: { wallet: publicKey } });
-        const signedResults = await signFeature.signMessage({ account, message: new TextEncoder().encode(challenge.message) });
-        signature = signedResults?.[0]?.signature;
-        if (!signature) throw new Error("The selected wallet did not return a message signature.");
-        const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
-        window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
-        setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(candidate.name || "Solana wallet"); setNotice("Wallet ownership verified. No transaction was sent.");
-        return;
-      }
-      throw new Error("No compatible Solana wallet with message signing was detected. This page now supports Wallet Standard wallets too, but the wallet must expose signing. A public address alone cannot prove ownership.");
+      const candidate = choice.standardWallet;
+      const connectFeature = candidate?.features["standard:connect"];
+      const signFeature = candidate?.features["solana:signMessage"];
+      if (!candidate || !connectFeature?.connect || !signFeature?.signMessage) throw new Error("This wallet does not expose the required connection and message-signing features.");
+      const connected = await connectFeature.connect();
+      const account = connected?.accounts?.find((item: any) => item?.chains?.some((chain: string) => chain.startsWith("solana:"))) ?? connected?.accounts?.[0];
+      if (!account?.address) throw new Error("The wallet did not return a Solana address.");
+      publicKey = account.address;
+      const challenge = await createWalletChallenge({ data: { wallet: publicKey } });
+      const signedResults = await signFeature.signMessage({ account, message: new TextEncoder().encode(challenge.message) });
+      signature = signedResults?.[0]?.signature;
+      if (!signature) throw new Error("The selected wallet did not return a message signature.");
+      const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
+      window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
+      setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(choice.name); setNotice("Wallet ownership verified. No transaction was sent.");
     } catch (e) { setNotice(e instanceof Error ? e.message : "Wallet connection failed. Try again."); }
     finally { setBusy(false); }
   };
@@ -187,8 +185,27 @@ export function WalletArena() {
 
   return <div className="td-wallet-arena">
     <div className="td-wallet-topline"><span className="td-mini-label">WALLET AUTHENTICATION</span><span className={`td-wallet-state ${wallet ? "is-connected" : ""}`}><i/>{wallet ? "VERIFIED SESSION" : "NOT CONNECTED"}</span></div>
-    {wallet ? <div className="td-connected-wallet"><span className="td-player-icon"><img src="/brand-mark-exact.png" alt=""/></span><div><span className="td-mini-label">CONNECTED {walletProviderName || "SOLANA"} WALLET</span><strong>{shortWallet(wallet)}</strong><small>Signed ownership verified · no transaction sent</small></div><button className="td-text-button" onClick={disconnect} disabled={busy}>Disconnect</button></div> : <div className="td-wallet-connect-copy"><h3>Bring your wallet.</h3><p>Connect a compatible Solana wallet and sign a one-time message. TradeDuel never asks for your seed phrase or private key.</p><button className="td-primary-action" onClick={connect} disabled={busy}>{busy ? "Please wait…" : "Connect Solana wallet ↗"}</button>{isWalletProviderAvailable === false && <small>No compatible injected wallet detected. You can try address verification below, or install a compatible wallet extension.</small>}<button className="td-text-button" type="button" onClick={() => setManualMode(!manualMode)}>{manualMode ? "Hide address verification" : "Use a public address instead"}</button>{manualMode && <div className="td-manual-wallet-verify"><label htmlFor="td-manual-wallet">PUBLIC SOLANA ADDRESS</label><input id="td-manual-wallet" value={manualAddress} onChange={e=>{setManualAddress(e.target.value.trim());setManualChallenge(null);setManualSignature("");}} placeholder="Paste your public wallet address" minLength={32} maxLength={44} autoComplete="off" spellCheck={false}/><button type="button" className="td-secondary-action" disabled={busy || manualAddress.length < 32} onClick={async()=>{setBusy(true);setNotice("Creating a one-time verification message…");try{const challenge=await createWalletChallenge({data:{wallet:manualAddress}});setManualChallenge({nonce:challenge.nonce,message:challenge.message});setNotice("Challenge created. Sign the exact message with a tool that supports Solana message signing, then paste the signature below.");}catch(e){setNotice(e instanceof Error?e.message:"Could not create a verification message.");}finally{setBusy(false);}}}>Generate verification message</button>{manualChallenge && <><label htmlFor="td-manual-message">MESSAGE TO SIGN</label><textarea id="td-manual-message" readOnly value={manualChallenge.message} rows={5}/><button type="button" className="td-text-button" onClick={()=>void navigator.clipboard?.writeText(manualChallenge.message)}>Copy message</button><label htmlFor="td-manual-signature">SIGNATURE (BASE64)</label><textarea id="td-manual-signature" value={manualSignature} onChange={e=>setManualSignature(e.target.value.trim())} placeholder="Paste the signature returned by your wallet" rows={3}/><button type="button" className="td-primary-action" disabled={busy || !manualSignature} onClick={async()=>{setBusy(true);setNotice("Verifying wallet signature…");try{const verified=await verifyWalletChallenge({data:{wallet:manualAddress,nonce:manualChallenge.nonce,signature:manualSignature}});window.sessionStorage.setItem(TOKEN_KEY,verified.token);window.sessionStorage.setItem(WALLET_KEY,verified.wallet);setToken(verified.token);setWallet(verified.wallet);setWalletProviderName("Verified address");setManualChallenge(null);setManualSignature("");setNotice("Wallet ownership verified. No transaction was sent.");}catch(e){setNotice(e instanceof Error?e.message:"Signature verification failed. Make sure you pasted the base64 signature for the exact message.");}finally{setBusy(false);}}}>Verify signature ↗</button></>}</div>}</div>}
-    {!wallet && <div className="td-pump-wallet-help"><span className="td-mini-label">USING A PUMP.FUN WALLET?</span><p>You can track its public address now, but to enter matchmaking you must prove you control it. If your Pump.fun wallet supports private-key export, you can import it into Phantom on your own device, then connect that same address here.</p><div className="td-pump-wallet-links"><a href="https://help.phantom.com/articles/import-your-privy-fomo-pump-fun-wallet-into-phantom-41408635409683" target="_blank" rel="noreferrer">Official Phantom import guide ↗</a><Link to="/tracker">Track a public address ↗</Link></div><small>Never paste your private key or recovery phrase into TradeDuel or share it with anyone. Check that the address shown in Phantom exactly matches your Pump.fun trading wallet.</small></div>}
+    {wallet ? <div className="td-connected-wallet"><span className="td-player-icon"><img src="/brand-mark-exact.png" alt=""/></span><div><span className="td-mini-label">CONNECTED {walletProviderName || "SOLANA"} WALLET</span><strong>{shortWallet(wallet)}</strong><small>Signed ownership verified · no transaction sent</small></div><button className="td-text-button" onClick={disconnect} disabled={busy}>Disconnect</button></div> : <div className="td-wallet-connect-copy"><h3>Bring your wallet.</h3><p>Connect a compatible Solana wallet and sign a one-time message. TradeDuel never asks for your seed phrase or private key.</p><button className="td-primary-action" onClick={() => { setWalletChoices(getWalletChoices()); setWalletPickerOpen(true); }} disabled={busy}>{busy ? "Please wait…" : "Choose a Solana wallet ↗"}</button>{isWalletProviderAvailable === false && <small>No compatible wallet detected yet. Choose a wallet below, install it, then reload this page.</small>}</div>}
+    {!wallet && walletPickerOpen && <div role="dialog" aria-modal="true" aria-labelledby="td-wallet-picker-title" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(5, 7, 15, 0.78)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }} onClick={(event) => { if (event.target === event.currentTarget) setWalletPickerOpen(false); }}>
+      <div style={{ width: "100%", maxWidth: "420px", border: "1px solid rgba(167, 139, 250, 0.35)", borderRadius: "16px", padding: "22px", background: "#11101b", color: "#f7f5ff", boxShadow: "0 24px 80px rgba(0,0,0,0.45)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
+          <div><span className="td-mini-label">WALLET CONNECTION</span><h3 id="td-wallet-picker-title" style={{ margin: "8px 0 4px" }}>Choose your wallet</h3></div>
+          <button type="button" className="td-text-button" aria-label="Close wallet selector" onClick={() => setWalletPickerOpen(false)}>Close ✕</button>
+        </div>
+        <p style={{ color: "#b9b5ca", fontSize: "13px", lineHeight: 1.5 }}>Select a detected wallet. TradeDuel asks you to sign a message to verify ownership; it will not send a transaction.</p>
+        {walletChoices.length > 0 ? <div style={{ display: "grid", gap: "8px", marginTop: "16px" }}>{walletChoices.map((choice) => <button type="button" key={choice.name} className="td-secondary-action" style={{ width: "100%", textAlign: "left", padding: "12px 14px" }} onClick={() => void connectWallet(choice)} disabled={busy}>{choice.name}<span style={{ float: "right" }}>↗</span></button>)}</div> : <p style={{ fontSize: "13px", color: "#b9b5ca" }}>No compatible wallet was detected in this browser.</p>}
+        <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", marginTop: "18px", paddingTop: "14px" }}>
+          <span className="td-mini-label">GET A WALLET</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "8px", fontSize: "13px" }}>
+            <a href="https://phantom.app/" target="_blank" rel="noreferrer">Phantom ↗</a>
+            <a href="https://solflare.com/" target="_blank" rel="noreferrer">Solflare ↗</a>
+            <a href="https://backpack.app/" target="_blank" rel="noreferrer">Backpack ↗</a>
+            <a href="https://glow.app/" target="_blank" rel="noreferrer">Glow ↗</a>
+          </div>
+        </div>
+      </div>
+    </div>}
+    {!wallet && <div className="td-pump-wallet-help"><span className="td-mini-label">USING A PUMP.FUN WALLET?</span><p>If your pump.fun email or Google wallet offers private-key export, import it directly into the official Phantom app or extension, then connect that imported account here. TradeDuel never needs your private key.</p><div className="td-pump-wallet-links"><a href="https://help.phantom.com/articles/import-your-privy-fomo-pump-fun-wallet-into-phantom" target="_blank" rel="noreferrer">Official Phantom import guide ↗</a></div><small>Never paste your private key or recovery phrase into TradeDuel or share it with anyone. Check that the address shown in Phantom exactly matches your Pump.fun trading wallet.</small></div>}
     {wallet && <div className="td-queue-setup"><div className="td-config-field"><label htmlFor="td-game-mode">GAME MODE</label><select id="td-game-mode" value={gameMode} onChange={e=>setGameMode(e.target.value as typeof gameMode)} disabled={busy||queueStatus!=="idle"}><option value="standard">Standard</option><option value="one_position">One Position</option><option value="exposure_cap">Exposure Cap</option><option value="equal_start">Equal Start</option></select><small>{gameMode === "standard" ? "Standard head-to-head format. Trading performance and ELO are not scored in this alpha." : gameMode === "one_position" ? "Proposed rule: only one open position per player. Enforcement is not live yet." : gameMode === "exposure_cap" ? "Proposed rule: apply the same maximum position exposure to both players. Enforcement is not live yet." : "Proposed rule: compare normalized returns from an equal starting allocation. Enforcement is not live yet."}</small></div><div className="td-config-field"><label htmlFor="td-duration">MATCH DURATION</label><select id="td-duration" value={duration} onChange={e=>setDuration(Number(e.target.value))} disabled={busy||queueStatus!=="idle"}><option value={900}>15 minutes</option><option value={1800}>30 minutes</option><option value={3600}>1 hour</option><option value={7200}>2 hours</option><option value={14400}>4 hours</option><option value={28800}>8 hours</option><option value={86400}>1 day</option></select><small>Timer begins when an opponent is paired. Longer durations are for matchmaking queue testing; verified trading results are not scored yet.</small></div></div>}
     {wallet && <div className="td-queue-controls"><div><span className="td-mini-label">MATCHMAKING QUEUE</span><p>Queue pairing is available for alpha testing. Mode rules and verified trade scoring are still in development.</p></div>{queueStatus === "waiting" ? <button className="td-secondary-action" onClick={leaveQueue} disabled={busy}>Leave queue</button> : <button className="td-primary-action" onClick={joinQueue} disabled={busy || queueStatus === "matched"}>{busy ? "Please wait…" : queueStatus === "matched" ? "Match found" : "Find an opponent"}</button>}</div>}
     <p className="td-wallet-notice" role="status">{notice}</p>
