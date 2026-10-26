@@ -33,7 +33,7 @@ async function fetchHistoricalTokenPrice(mint: string, targetAt: number, poolCac
   let pool = poolCache.get(mint);
   if (pool === undefined) {
     try {
-      const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/tokens/${encodeURIComponent(mint)}/pools?page=1`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
+      const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/tokens/${encodeURIComponent(mint)}/pools?page=1`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(4000) });
       if (!response.ok) { poolCache.set(mint, null); return noPrice(`pool_lookup_http_${response.status}`); }
       const body = await response.json() as { data?: Array<{ id?: string; attributes?: { address?: string; reserve_in_usd?: string }; relationships?: { base_token?: { data?: { id?: string } }; quote_token?: { data?: { id?: string } } } }> };
       const candidates = (body.data ?? []).flatMap((item) => {
@@ -774,7 +774,7 @@ export const reconcileMatchSettlement = createServerFn({ method: "POST" }).valid
   const snapshots = await DB.prepare("SELECT wallet,phase,observed_at,sol_balance,token_balances_json FROM td_match_valuations WHERE match_id = ?").bind(match.id).all<{wallet:string;phase:string;observed_at:number;sol_balance:number;token_balances_json:string}>();
   const poolCache = new Map<string, GeckoPoolChoice | null>();
   let quoteLookups = 0;
-  const quoteBudget = 24;
+  const quoteBudget = 4;
   for (const snapshot of snapshots.results ?? []) {
     let tokenBalances: Array<{mint:string;amount:number}> = [];
     try { tokenBalances = JSON.parse(snapshot.token_balances_json) as Array<{mint:string;amount:number}>; } catch { /* snapshot stays incomplete */ }
