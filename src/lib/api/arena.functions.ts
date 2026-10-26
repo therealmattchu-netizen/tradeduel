@@ -139,7 +139,16 @@ export const getLeaderboard = createServerFn({ method: "GET" }).handler(async ()
 export const joinMatchmakingQueue = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24), format: z.enum(["standard", "one_position", "exposure_cap", "equal_start"]), durationSeconds: z.number().int().min(900).max(86400) })).handler(async ({ data }) => {
   const { DB, wallet } = await requireSession(data.token);
   const existing = await DB.prepare("SELECT id, status, match_id, format, duration_seconds FROM td_queue WHERE wallet = ?").bind(wallet).first<{ id: number; status: string; match_id: string | null; format: string; duration_seconds: number }>();
-  if (existing?.status === "matched" && existing.match_id) return { status: "matched", matchId: existing.match_id, message: "You already have a match. Open your match history to continue." };
+  if (existing?.status === "matched" && existing.match_id) {
+    const linkedMatch = await DB.prepare("SELECT status, ends_at FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(existing.match_id, wallet, wallet).first<{ status: string; ends_at: string | null }>();
+    const matchFinished = linkedMatch && (linkedMatch.status !== "active" || (linkedMatch.ends_at && linkedMatch.ends_at <= new Date().toISOString()));
+    if (matchFinished) {
+      await DB.prepare("UPDATE td_matches SET status = 'completed', finished_at = COALESCE(finished_at, datetime('now')) WHERE id = ? AND status = 'active'").bind(existing.match_id).run();
+      await DB.prepare("DELETE FROM td_queue WHERE wallet = ? AND status = 'matched' AND match_id = ?").bind(wallet, existing.match_id).run();
+    } else {
+      return { status: "matched", matchId: existing.match_id, message: "You already have an active match. Finish or surrender before entering another queue." };
+    }
+  }
   if (existing?.status === "waiting" && existing.format === data.format && existing.duration_seconds === data.durationSeconds) return { status: "waiting", matchId: existing.match_id, message: "You're already in this queue." };
   // Do not delete a matched queue record: it is the durable link used by polling.
   await DB.prepare("DELETE FROM td_queue WHERE wallet = ? AND status != 'matched'").bind(wallet).run();
