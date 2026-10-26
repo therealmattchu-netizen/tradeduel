@@ -35,12 +35,13 @@ async function fetchHistoricalTokenPrice(mint: string, targetAt: number, poolCac
     try {
       const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/tokens/${encodeURIComponent(mint)}/pools?page=1`, { headers: { accept: "application/json" } });
       if (!response.ok) { poolCache.set(mint, null); return noPrice(`pool_lookup_http_${response.status}`); }
-      const body = await response.json() as { data?: Array<{ id?: string; attributes?: { address?: string; reserve_in_usd?: string }; relationships?: { base_token?: { data?: { id?: string } } } }> };
+      const body = await response.json() as { data?: Array<{ id?: string; attributes?: { address?: string; reserve_in_usd?: string }; relationships?: { base_token?: { data?: { id?: string } }; quote_token?: { data?: { id?: string } } }> };
       const candidates = (body.data ?? []).flatMap((item) => {
         const baseId = item.relationships?.base_token?.data?.id;
         const address = item.attributes?.address ?? item.id?.split("_").slice(1).join("_");
         const liquidityUsd = Number(item.attributes?.reserve_in_usd ?? 0);
-        return baseId === `solana_${mint}` && address && Number.isFinite(liquidityUsd) && liquidityUsd >= 1000 ? [{ address, liquidityUsd }] : [];
+        const quoteId = item.relationships?.quote_token?.data?.id;
+        return (baseId === `solana_${mint}` || quoteId === `solana_${mint}`) && address && Number.isFinite(liquidityUsd) && liquidityUsd >= 1000 ? [{ address, liquidityUsd }] : [];
       }).sort((a,b) => b.liquidityUsd-a.liquidityUsd);
       pool = candidates[0] ?? null;
       poolCache.set(mint, pool);
@@ -378,7 +379,9 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   // Capture portfolio valuations close to the start and after the deadline. These are
   // supporting evidence only: incomplete pricing or unresolved transfers never yield ELO.
   const nowSec = Math.floor(Date.now() / 1000);
-  const phase = match.started_at && Math.abs(nowSec - start) <= 30 ? "start" : nowSec >= end ? "end" : null;
+  // Capture start evidence during a wider two-minute startup window to tolerate room-load/RPC latency.
+  // The actual observed_at timestamp is retained and settlement still enforces its boundary tolerance.
+  const phase = match.started_at && Math.abs(nowSec - start) <= 120 ? "start" : nowSec >= end ? "end" : null;
   if (phase) {
     const existingSnapshot = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = ?").bind(match.id,trackedWallet,phase).first<{id:number}>();
     if (!existingSnapshot) {
