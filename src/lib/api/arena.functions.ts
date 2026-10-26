@@ -452,6 +452,18 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   let state = await DB.prepare("SELECT before_signature,exhausted FROM td_match_index_state WHERE match_id = ? AND wallet = ?")
     .bind(match.id, trackedWallet).first<{before_signature:string|null;exhausted:number}>();
   try {
+    // Always ingest the newest signatures on every room sync, even while the
+    // historical cursor is still paging backwards. Previously, recent discovery
+    // only ran after history exhaustion, delaying live-match activity for large wallets.
+    const recent = await rpcCall("getSignaturesForAddress",[trackedWallet,{limit:25,commitment:"confirmed"}]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
+    for (const sig of recent) {
+      if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
+        await DB.prepare("INSERT OR IGNORE INTO td_match_index_queue (match_id,wallet,signature,slot,block_time,tx_error_json) VALUES (?,?,?,?,?,?)")
+          .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
+      }
+    }
+    // In parallel with live discovery, advance one durable historical page until
+    // the match start boundary is crossed. INSERT OR IGNORE makes overlap safe.
     if (!state || !state.exhausted) {
       const options:Record<string,unknown> = {limit:100,commitment:"confirmed"};
       if (state?.before_signature) options.before = state.before_signature;
@@ -467,16 +479,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       const nextCursor = page.length ? page[page.length-1].signature : (state?.before_signature ?? null);
       await DB.prepare("INSERT INTO td_match_index_state (match_id,wallet,before_signature,exhausted,pages_fetched,last_checked_at) VALUES (?,?,?,?,1,datetime('now')) ON CONFLICT(match_id,wallet) DO UPDATE SET before_signature=excluded.before_signature,exhausted=excluded.exhausted,pages_fetched=td_match_index_state.pages_fetched+1,last_checked_at=datetime('now')")
         .bind(match.id,trackedWallet,nextCursor,exhausted?1:0).run();
-    } else {
-      // Once the historical cursor is exhausted, keep checking newest signatures for
-      // late confirmations and newly visible transactions without rewinding old pages.
-      const recent = await rpcCall("getSignaturesForAddress",[trackedWallet,{limit:25,commitment:"confirmed"}]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
-      for (const sig of recent) if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
-        await DB.prepare("INSERT OR IGNORE INTO td_match_index_queue (match_id,wallet,signature,slot,block_time,tx_error_json) VALUES (?,?,?,?,?,?)")
-          .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
-      }
     }
-  
   } catch {
     // Transaction indexing must not prevent portfolio snapshots from being captured.
     // The next room sync retries signature discovery; ELO remains blocked if evidence is missing.
