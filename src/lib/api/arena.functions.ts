@@ -444,7 +444,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   let match: SyncMatch | null = await DB.prepare("SELECT id, player_one, player_two, status, started_at, ends_at, verification_status FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(data.matchId, wallet, wallet).first<Omit<SyncMatch,"custom">>().then(row=>row?{...row,custom:false}:null);
   let participants: string[] = [];
   if (!match) {
-    const custom = await DB.prepare("SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string;started_at:string|null;ends_at:string|null;mode:string;max_players:number}>();
+    const custom = await DB.prepare("SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string;started_at:string|null;ends_at:string|null;mode:string;max_players:number;duration_seconds:number}>();
     const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
     if (!custom || !member) throw new Error("Match not found for this wallet.");
     const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string;team_number:number}>();
