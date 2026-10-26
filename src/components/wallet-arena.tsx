@@ -229,7 +229,7 @@ export function WalletArena() {
           // be supplied/misidentified by another extension.
           if (choice.name === "Phantom") {
             const phantomProvider = window.phantom?.solana;
-            if (phantomProvider?.connect && phantomProvider.signMessage && !phantomProvider.isBackpack) {
+            if (phantomProvider && typeof phantomProvider.connect === "function" && typeof phantomProvider.signMessage === "function" && !phantomProvider.isBackpack) {
               void connectWallet({ name: "Phantom", provider: phantomProvider });
               return;
             }
