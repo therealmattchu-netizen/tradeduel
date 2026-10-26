@@ -551,19 +551,20 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       ]);
       const tokenBalances = [...classicAccounts.value,...token2022Accounts.value].map((entry)=>({mint:entry.account.data.parsed.info.mint,amount:Number(entry.account.data.parsed.info.tokenAmount.uiAmount ?? 0)})).filter((entry)=>entry.amount>0);
       const mints = [...new Set(["So11111111111111111111111111111111111111112",...tokenBalances.map((entry)=>entry.mint)])].slice(0,30);
-      let priceRows: Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number}}> = [];
+      let priceRows: Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number};marketCap?:number;fdv?:number}> = [];
       try {
         const pricesResponse = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`);
         if (pricesResponse.ok) priceRows = await pricesResponse.json() as typeof priceRows;
       } catch { /* valuation remains incomplete when the price source is unavailable */ }
       const priceByMint = new Map<string,number>();
       const liquidityByMint = new Map<string,number>();
+      const marketCapByMint = new Map<string,number>();
       for (const pair of priceRows) {
         const mint = pair.baseToken?.address; const price = Number(pair.priceUsd); const liquidity = Number(pair.liquidity?.usd ?? 0);
-        if (mint && Number.isFinite(price) && price > 0 && liquidity >= 100 && liquidity > (liquidityByMint.get(mint) ?? 0)) { priceByMint.set(mint,price); liquidityByMint.set(mint,liquidity); }
+        if (mint && Number.isFinite(price) && price > 0 && liquidity >= 100 && liquidity > (liquidityByMint.get(mint) ?? 0)) { priceByMint.set(mint,price); liquidityByMint.set(mint,liquidity); const cap=Number(pair.marketCap ?? pair.fdv ?? 0); if(Number.isFinite(cap)&&cap>0) marketCapByMint.set(mint,cap); }
       }
       const solPrice = priceByMint.get("So11111111111111111111111111111111111111112");
-      const tokenValues = tokenBalances.map((entry)=>({ ...entry, priceUsd:priceByMint.get(entry.mint) ?? null, valueUsd:priceByMint.has(entry.mint)?entry.amount*priceByMint.get(entry.mint)!:null }));
+      const tokenValues = tokenBalances.map((entry)=>({ ...entry, priceUsd:priceByMint.get(entry.mint) ?? null, marketCapUsd:marketCapByMint.get(entry.mint) ?? null, liquidityUsd:liquidityByMint.get(entry.mint) ?? null, valueUsd:priceByMint.has(entry.mint)?entry.amount*priceByMint.get(entry.mint)!:null }));
       for (const mint of mints) {
         const price = priceByMint.get(mint) ?? null;
         const liquidity = liquidityByMint.get(mint) ?? null;
@@ -644,11 +645,11 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     await DB.prepare("INSERT OR IGNORE INTO td_match_valuation_observations (match_id,wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?)")
       .bind(match.id, trackedWallet, observationAt, balance.value / 1e9, portfolioUsd, JSON.stringify(tokenValues), tokenValues.length - unpricedMints, unpricedMints, complete ? 1 : 0, note).run();
   }
-  const observations = await DB.prepare("SELECT wallet,observed_at,sol_balance,portfolio_usd,priced_mints,unpriced_mints,complete,source,integrity_note FROM td_match_valuation_observations WHERE match_id = ? ORDER BY observed_at DESC LIMIT 100").bind(match.id).all<{wallet:string;observed_at:number;sol_balance:number;portfolio_usd:number|null;priced_mints:number;unpriced_mints:number;complete:number;source:string;integrity_note:string}>();
+  const observations = await DB.prepare("SELECT wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,source,integrity_note FROM td_match_valuation_observations WHERE match_id = ? ORDER BY observed_at DESC LIMIT 100").bind(match.id).all<{wallet:string;observed_at:number;sol_balance:number;portfolio_usd:number|null;token_balances_json:string;priced_mints:number;unpriced_mints:number;complete:number;source:string;integrity_note:string}>();
   const events = await DB.prepare("SELECT wallet,signature,block_time,slot,success,pump_fun_related,sol_delta,token_deltas_json,event_type FROM td_match_events WHERE match_id = ? ORDER BY block_time DESC LIMIT 60").bind(match.id).all<{wallet:string;signature:string;block_time:number|null;slot:number|null;success:number;pump_fun_related:number;sol_delta:number;token_deltas_json:string;event_type:string}>();
   const valuations = await DB.prepare("SELECT wallet,phase,observed_at,portfolio_usd,priced_mints,unpriced_mints,complete,integrity_note FROM td_match_valuations WHERE match_id = ? ORDER BY observed_at DESC").bind(match.id).all<{wallet:string;phase:string;observed_at:number;portfolio_usd:number|null;priced_mints:number;unpriced_mints:number;complete:number;integrity_note:string}>();
   const priceEvidence = await DB.prepare("SELECT wallet,phase,mint,price_usd,liquidity_usd,source,observed_at,quote_kind,accepted,reason FROM td_match_price_evidence WHERE match_id = ? ORDER BY observed_at DESC,mint LIMIT 100").bind(match.id).all<{wallet:string;phase:string;mint:string;price_usd:number|null;liquidity_usd:number|null;source:string;observed_at:number;quote_kind:string;accepted:number;reason:string}>();
-  return { matchId:match.id, indexed, events:(events.results??[]).map(e=>({...e,tokenDeltas:JSON.parse(e.token_deltas_json),token_deltas_json:undefined,success:Boolean(e.success),pump_fun_related:Boolean(e.pump_fun_related)})), valuations:valuations.results??[], valuationObservations:(observations.results??[]).map(row=>({...row,complete:Boolean(row.complete)})), priceEvidence:(priceEvidence.results??[]).map(row=>({...row,accepted:Boolean(row.accepted)})), status:"activity_and_valuation_evidence", note:`Buy/sell labels are instruction-log candidates. Portfolio values and valuationObservations are sampled spot-price estimates at sync time, not historical prices between syncs, and may be incomplete. They are not official P&L; transfers, fees, token eligibility, price quality, and both players' snapshots require reconciliation before scoring.${indexingErrors ? ` Signature indexing failed for ${indexingErrors} wallet(s) on this poll; portfolio monitoring continued and indexing will retry.` : ""}` };
+  return { matchId:match.id, indexed, events:(events.results??[]).map(e=>({...e,tokenDeltas:JSON.parse(e.token_deltas_json),token_deltas_json:undefined,success:Boolean(e.success),pump_fun_related:Boolean(e.pump_fun_related)})), valuations:valuations.results??[], valuationObservations:(observations.results??[]).map(row=>({...row,tokenBalances:JSON.parse(row.token_balances_json),token_balances_json:undefined,complete:Boolean(row.complete)})), priceEvidence:(priceEvidence.results??[]).map(row=>({...row,accepted:Boolean(row.accepted)})), status:"activity_and_valuation_evidence", note:`Buy/sell labels are instruction-log candidates. Portfolio values and valuationObservations are sampled spot-price estimates at sync time, not historical prices between syncs, and may be incomplete. They are not official P&L; transfers, fees, token eligibility, price quality, and both players' snapshots require reconciliation before scoring.${indexingErrors ? ` Signature indexing failed for ${indexingErrors} wallet(s) on this poll; portfolio monitoring continued and indexing will retry.` : ""}` };
 });
 
 /**
