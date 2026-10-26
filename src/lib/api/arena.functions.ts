@@ -1159,6 +1159,7 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
         startedAt,
         endsAt,
         mode: match.mode,
+        gameRule: match.game_rule,
         maxPlayers: match.max_players,
         members: currentMembers,
       },
