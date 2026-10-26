@@ -117,14 +117,14 @@ export function WalletArena() {
       if (!alive) return;
       setQueueStatus(result.status);
       if (result.status === "waiting") setNotice("You're still in the matchmaking queue.");
-      else if (result.status === "matched") setNotice("Opponent found. This alpha match does not score trading performance or change ELO.");
+      else if (result.status === "matched") setNotice("Opponent found. This match does not score trading performance or change ELO.");
     }).catch(() => { /* expired sessions are handled when the user takes an action */ });
     return () => { alive = false; };
   }, [token, loadMatches]);
   useEffect(() => {
     if (!token || queueStatus !== "waiting") return;
     let alive = true;
-    const poll = async () => { try { const result = await getQueueStatus({ data: { token } }); if (!alive) return; setQueueStatus(result.status); if (result.status === "matched") { setNotice("Opponent found. This alpha match does not score trading performance or change ELO."); await loadMatches(token); } } catch { /* retry on next poll */ } };
+    const poll = async () => { try { const result = await getQueueStatus({ data: { token } }); if (!alive) return; setQueueStatus(result.status); if (result.status === "matched") { setNotice("Opponent found. This match does not score trading performance or change ELO."); await loadMatches(token); } } catch { /* retry on next poll */ } };
     void poll(); const interval = window.setInterval(() => void poll(), 5000);
     return () => { alive = false; window.clearInterval(interval); };
   }, [token, queueStatus, loadMatches]);
