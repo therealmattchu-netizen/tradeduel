@@ -96,7 +96,6 @@ export function PlayerProfileMenu() {
           <div><strong>{displayName || "Anonymous player"}</strong><small>{shortWallet(wallet)}</small></div>
         </div>
         <button type="button" className="td-profile-secondary" disabled={busy} onClick={() => fileRef.current?.click()}>{busy ? "Saving…" : avatar ? "Change profile picture" : "Upload profile picture"}</button>
-        {avatar && <button type="button" className="td-profile-link" disabled={busy} onClick={() => void save(null)}>Keep current picture</button>}
         <label className="td-profile-label">DISPLAY NAME<input value={displayName} maxLength={24} onChange={event => setDisplayName(event.target.value)} placeholder="Choose a player name" /></label>
         <button type="button" className="td-profile-save" disabled={busy} onClick={() => void save(avatar)}>{busy ? "Saving…" : "Save profile"}</button>
         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={event => void chooseImage(event.target.files?.[0])} />
