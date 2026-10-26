@@ -122,7 +122,7 @@ export function SiteAudio() {
   }
 
   return (
-    <aside aria-label="Audio settings" style={{ position: "fixed", right: 16, bottom: 16, zIndex: 1000, display: "flex", alignItems: "center", gap: 6, padding: 7, border: "1px solid var(--td-border)", background: "var(--td-panel)", color: "var(--td-text)", borderRadius: 8, boxShadow: "0 6px 24px rgba(0,0,0,.22)" }}>
+    <aside aria-label="Audio settings" style={{ position: "fixed", right: 16, bottom: 16, zIndex: 1000, display: "flex", alignItems: "center", gap: 6, padding: 7, border: "1px solid var(--td-border)", background: "var(--td-panel)", color: "var(--td-text)", borderRadius: 8, boxShadow: "0 6px 24px var(--td-shadow)" }}>
       <span style={{ fontSize: 10, letterSpacing: "0.12em", color: "var(--td-muted)", padding: "0 4px" }}>{scene === "duel" ? "DUEL AUDIO" : "LOBBY AUDIO"}</span>
       <button type="button" aria-pressed={prefs.music} onClick={() => toggle("music")} style={{ border: "1px solid var(--td-border)", background: prefs.music ? "var(--td-accent-soft)" : "transparent", color: "var(--td-text)", padding: "7px 9px", borderRadius: 5, fontSize: 11, cursor: "pointer" }}>{prefs.music ? "Music on" : "Music off"}</button>
       <button type="button" aria-pressed={prefs.effects} onClick={() => toggle("effects")} style={{ border: "1px solid var(--td-border)", background: prefs.effects ? "var(--td-accent-soft)" : "transparent", color: "var(--td-text)", padding: "7px 9px", borderRadius: 5, fontSize: 11, cursor: "pointer" }}>{prefs.effects ? "SFX on" : "SFX off"}</button>
