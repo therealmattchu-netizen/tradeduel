@@ -359,6 +359,16 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
     const positions=[...holdings.values()].map(h=>({mint:h.mint,amount:h.amount,priceUsd:prices.get(h.mint)?.priceUsd??null,valueUsd:prices.has(h.mint)?h.amount*prices.get(h.mint)!.priceUsd!:null,liquidityUsd:prices.get(h.mint)?.liquidityUsd??null,pairUrl:prices.get(h.mint)?.pairUrl??null,programs:[...h.programs]})).sort((a,b)=>(b.valueUsd??-1)-(a.valueUsd??-1));
     const pricedValue=positions.reduce((sum,p)=>sum+(p.valueUsd??0),0);
     const unpricedPositions=positions.filter(p=>p.valueUsd===null).length;
+    const buyRows=await DB.prepare("SELECT mint,SUM(token_amount) AS bought_amount,SUM(estimated_cost_usd) AS spent_usd,COUNT(*) AS buy_count,MIN(block_time) AS first_buy_at FROM td_wallet_token_buys WHERE wallet=? GROUP BY mint").bind(wallet).all<{mint:string;bought_amount:number;spent_usd:number|null;buy_count:number;first_buy_at:number|null}>();
+    const buyMap=new Map<string,{boughtAmount:number;spentUsd:number|null;buyCount:number;firstBuyAt:number|null}>();
+    for(const row of buyRows.results??[])buyMap.set(row.mint,{boughtAmount:Number(row.bought_amount??0),spentUsd:row.spent_usd===null?null:Number(row.spent_usd),buyCount:Number(row.buy_count??0),firstBuyAt:row.first_buy_at});
+    const trackedPositions=positions.map(p=>{const b=buyMap.get(p.mint);const avg=b&&b.spentUsd!==null&&b.boughtAmount>0?b.spentUsd/b.boughtAmount:null;const basis=avg===null?null:avg*p.amount;const pnl=p.valueUsd!==null&&basis!==null?p.valueUsd-basis:null;return {...p,estimatedTotalSpentUsd:b?.spentUsd??null,estimatedRemainingCostUsd:basis,estimatedPnlUsd:pnl,estimatedPnlPercent:pnl!==null&&basis!==null&&basis>0?pnl/basis*100:null,detectedBuyCount:b?.buyCount??0,firstBuyAt:b?.firstBuyAt??null};});
+    const observedAt=Math.floor(Date.now()/1000);
+    for(const p of positions){try{await DB.prepare("INSERT OR REPLACE INTO td_wallet_token_price_history (wallet,mint,observed_at,token_amount,price_usd,value_usd,liquidity_usd) VALUES (?,?,?,?,?,?,?)").bind(wallet,p.mint,observedAt,p.amount,p.priceUsd,p.valueUsd,p.liquidityUsd).run();}catch{}}
+    const trackedBuyCount=(buyRows.results??[]).reduce((sum,row)=>sum+Number(row.buy_count??0),0);
+    const trackedSpend=(buyRows.results??[]).reduce((sum,row)=>sum+(row.spent_usd===null?0:Number(row.spent_usd)),0);
+    const estimatedOpenPnl=trackedPositions.reduce((sum,p)=>sum+(p.estimatedPnlUsd??0),0);
+    const trackedPnlCoverage=trackedPositions.filter(p=>p.estimatedPnlUsd!==null).length;
     return {
       wallet,
       balanceSol: balanceResult.value / 1_000_000_000,
