@@ -56,7 +56,7 @@ export function CustomMatchBrowser() {
     if (!selected) { setLiveActivity(null); setVerifiedSettlement(null); return; }
     let alive=true;
     const pollActivity=async()=>{ const token=window.sessionStorage.getItem("td_session_token")||""; if(!token)return; try { const activity=await syncMatchActivity({data:{token,matchId:selected.id}}) as any; if(!alive)return; setLiveActivity(activity); if(activity.customRoom) setSelected(previous=>previous&&previous.id===selected.id?{...previous,status:activity.customRoom.status,players_count:activity.customRoom.members?.length??previous.players_count}:previous); if(activity.customRoom?.status==="completed"){try{const settlement=await reconcileCustomMatchSettlement({data:{token,matchId:selected.id}}) as any;if(alive)setVerifiedSettlement(settlement);}catch(error){if(alive)setNotice(error instanceof Error?error.message:"Team PnL reconciliation is waiting for evidence.");}} } catch(error) { if(alive) setNotice(error instanceof Error?error.message:"Live match activity could not be synchronized."); } };
-    void pollActivity(); const pollTimer=window.setInterval(()=>void pollActivity(),10000); const clockTimer=window.setInterval(()=>setClockNow(Date.now()),1000);
+    void pollActivity(); const pollTimer=window.setInterval(()=>void pollActivity(),2500); const clockTimer=window.setInterval(()=>setClockNow(Date.now()),1000);
     return()=>{alive=false;window.clearInterval(pollTimer);window.clearInterval(clockTimer)};
   },[selected?.id]);
 
