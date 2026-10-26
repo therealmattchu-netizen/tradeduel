@@ -176,7 +176,7 @@ export const joinMatchmakingQueue = createServerFn({ method: "POST" }).validator
     await DB.prepare("UPDATE td_queue SET status = 'waiting' WHERE wallet = ? AND status = 'matching'").bind(opponent.wallet).run();
     throw error;
   }
-  return { status: "matched", matchId, message: "Opponent found. This is a practice match; no trade scoring is enabled." };
+  return { status: "matched", matchId, message: "Opponent found. Competitive test match started; trade evidence is collected, but official ELO scoring is not active yet." };
 });
 
 export const leaveMatchmakingQueue = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24) })).handler(async ({ data }) => {
@@ -205,7 +205,7 @@ export const surrenderMatch = createServerFn({ method: "POST" }).validator(z.obj
   const result = await DB.prepare("UPDATE td_matches SET status = 'completed', finished_at = datetime('now') WHERE id = ? AND status = 'active' AND (player_one = ? OR player_two = ?)")
     .bind(data.matchId, wallet, wallet).run();
   if ((result.meta?.changes ?? 0) !== 1) throw new Error("The match has already ended.");
-  return { status: "completed" as const, message: "You surrendered. The match has ended. Practice matches do not award a win or affect ELO." };
+  return { status: "completed" as const, message: "You surrendered. The match has ended. Competitive test data is retained, but no official winner or ELO change is applied." };
 });
 
 export const getQueueStatus = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24) })).handler(async ({ data }) => {
