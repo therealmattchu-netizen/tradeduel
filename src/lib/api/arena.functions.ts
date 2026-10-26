@@ -405,15 +405,15 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       const liquidityByMint = new Map<string,number>();
       for (const pair of priceRows) {
         const mint = pair.baseToken?.address; const price = Number(pair.priceUsd); const liquidity = Number(pair.liquidity?.usd ?? 0);
-        if (mint && Number.isFinite(price) && price > 0 && liquidity >= 1000 && liquidity > (liquidityByMint.get(mint) ?? 0)) { priceByMint.set(mint,price); liquidityByMint.set(mint,liquidity); }
+        if (mint && Number.isFinite(price) && price > 0 && liquidity >= 100 && liquidity > (liquidityByMint.get(mint) ?? 0)) { priceByMint.set(mint,price); liquidityByMint.set(mint,liquidity); }
       }
       const solPrice = priceByMint.get("So11111111111111111111111111111111111111112");
       const tokenValues = tokenBalances.map((entry)=>({ ...entry, priceUsd:priceByMint.get(entry.mint) ?? null, valueUsd:priceByMint.has(entry.mint)?entry.amount*priceByMint.get(entry.mint)!:null }));
       for (const mint of mints) {
         const price = priceByMint.get(mint) ?? null;
         const liquidity = liquidityByMint.get(mint) ?? null;
-        const accepted = price !== null && liquidity !== null && liquidity >= 1000;
-        const reason = accepted ? "Latest DexScreener spot quote passed the configured minimum liquidity threshold; not a historical quote." : "No quote passed the configured price/liquidity checks.";
+        const accepted = price !== null && liquidity !== null && liquidity >= 100;
+        const reason = accepted ? "Latest DexScreener spot quote passed the configured $100 minimum liquidity threshold; not a historical quote." : "No quote passed the configured price/liquidity checks.";
         await DB.prepare("INSERT OR IGNORE INTO td_match_price_evidence (match_id,wallet,phase,mint,price_usd,liquidity_usd,source,observed_at,quote_kind,accepted,reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
           .bind(match.id,trackedWallet,phase,mint,price,liquidity,"dexscreener_tokens_v1",nowSec,"observed_spot",accepted?1:0,reason).run();
       }
@@ -451,6 +451,19 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     try {
       const response = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`);
       if (response.ok) priceRows = await response.json() as typeof priceRows;
+      // Some quote responses omit results for comma-separated batches. Fall back
+      // to individual token lookups so one missing mint cannot zero the whole panel.
+      if (priceRows.length === 0) {
+        const fallback = await Promise.all(mints.slice(0, 12).map(async (mint) => {
+          try {
+            const single = await fetch(`https://api.dexscreener.com/latest/dex/tokens/${mint}`);
+            if (!single.ok) return [];
+            const body = await single.json() as { pairs?: typeof priceRows };
+            return body.pairs ?? [];
+          } catch { return []; }
+        }));
+        priceRows = fallback.flat();
+      }
     } catch { /* Preserve an incomplete observation when the quote source is unavailable. */ }
     const prices = new Map<string, number>();
     const liquidities = new Map<string, number>();
@@ -458,7 +471,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       const mint = pair.baseToken?.address;
       const price = Number(pair.priceUsd);
       const liquidity = Number(pair.liquidity?.usd ?? 0);
-      if (mint && Number.isFinite(price) && price > 0 && liquidity >= 1000 && liquidity > (liquidities.get(mint) ?? 0)) {
+      if (mint && Number.isFinite(price) && price > 0 && liquidity >= 100 && liquidity > (liquidities.get(mint) ?? 0)) {
         prices.set(mint, price);
         liquidities.set(mint, liquidity);
       }
@@ -471,7 +484,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     const pricedTokenValue = tokenValues.reduce((sum, entry) => sum + (entry.valueUsd ?? 0), 0);
     const portfolioUsd = solPrice !== undefined || tokenValues.some(entry => entry.valueUsd !== null) ? (solPrice !== undefined ? balance.value / 1e9 * solPrice : 0) + pricedTokenValue : null;
     const note = complete
-      ? "Observation-time estimate using current DexScreener spot quotes passing a $1,000 liquidity floor. Not historical pricing, official P&L, or settlement evidence; transfers and token eligibility remain unresolved."
+      ? "Observation-time estimate using current DexScreener spot quotes passing a $100 liquidity floor. Not historical pricing, official P&L, or settlement evidence; transfers and token eligibility remain unresolved."
       : "Incomplete observation-time estimate: one or more assets lacked a qualifying current spot quote or token coverage exceeded the cap. Not historical pricing or settlement evidence.";
     await DB.prepare("INSERT OR IGNORE INTO td_match_valuation_observations (match_id,wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?)")
       .bind(match.id, trackedWallet, observationAt, balance.value / 1e9, portfolioUsd, JSON.stringify(tokenValues), tokenValues.length - unpricedMints, unpricedMints, complete ? 1 : 0, note).run();
