@@ -285,6 +285,8 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const call = solanaRpcCall;
     const wallet = data.wallet;
+    const { DB } = bindings();
+    if (!DB) throw new Error("Wallet tracking database is not configured.");
     const tokenPrograms = [
       { name: "spl-token", id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
       { name: "token-2022", id: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" },
