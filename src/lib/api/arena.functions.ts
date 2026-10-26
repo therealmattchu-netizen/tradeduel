@@ -905,3 +905,38 @@ export const sendCustomMatchChat = createServerFn({ method: "POST" })
     const row = await DB.prepare("SELECT id,wallet,channel,message,created_at FROM td_custom_match_chat WHERE match_id=? AND wallet=? ORDER BY id DESC LIMIT 1").bind(data.matchId,wallet).first<{id:number;wallet:string;channel:string;message:string;created_at:string}>();
     return { message:row, team:member.team_number };
   });
+
+
+/** Wallet profile API. Avatar data is resized client-side and bounded server-side. */
+export const getMyProfile = createServerFn({ method: "GET" })
+  .validator(z.object({ token: z.string().min(24) }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const row = await DB.prepare("SELECT wallet,display_name,avatar_data_url FROM td_users WHERE wallet=?")
+      .bind(wallet).first<{wallet:string;display_name:string|null;avatar_data_url:string|null}>();
+    return { wallet, displayName: row?.display_name ?? "", avatarDataUrl: row?.avatar_data_url ?? null };
+  });
+
+export const updateMyProfile = createServerFn({ method: "POST" })
+  .validator(z.object({
+    token: z.string().min(24),
+    displayName: z.string().trim().max(24).optional(),
+    avatarDataUrl: z.string().max(180_000).nullable().optional(),
+  }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const displayName = (data.displayName ?? "").trim();
+    if (displayName && !/^[\\p{L}\\p{N}_ .-]{2,24}$/u.test(displayName)) {
+      throw new Error("Display names must be 2–24 letters, numbers, spaces, dots, underscores, or hyphens.");
+    }
+    if (data.avatarDataUrl !== undefined && data.avatarDataUrl !== null) {
+      if (!/^data:image\\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(data.avatarDataUrl) || data.avatarDataUrl.length > 180_000) {
+        throw new Error("Avatar must be a PNG, JPEG, or WebP image under the size limit.");
+      }
+    }
+    await DB.prepare("INSERT INTO td_users (wallet,display_name,avatar_data_url,last_seen_at) VALUES (?,?,?,datetime('now')) ON CONFLICT(wallet) DO UPDATE SET display_name=excluded.display_name,avatar_data_url=COALESCE(?,td_users.avatar_data_url),last_seen_at=datetime('now')")
+      .bind(wallet, displayName || null, data.avatarDataUrl ?? null, data.avatarDataUrl === undefined ? null : data.avatarDataUrl).run();
+    const row = await DB.prepare("SELECT wallet,display_name,avatar_data_url FROM td_users WHERE wallet=?")
+      .bind(wallet).first<{wallet:string;display_name:string|null;avatar_data_url:string|null}>();
+    return { wallet, displayName: row?.display_name ?? "", avatarDataUrl: row?.avatar_data_url ?? null, message: "Profile saved." };
+  });
