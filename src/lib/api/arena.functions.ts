@@ -926,11 +926,11 @@ export const updateMyProfile = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
     const displayName = (data.displayName ?? "").trim();
-    if (displayName && !/^[\\p{L}\\p{N}_ .-]{2,24}$/u.test(displayName)) {
+    if (displayName && !/^[\p{L}\p{N}_ .-]{2,24}$/u.test(displayName)) {
       throw new Error("Display names must be 2–24 letters, numbers, spaces, dots, underscores, or hyphens.");
     }
     if (data.avatarDataUrl !== undefined && data.avatarDataUrl !== null) {
-      if (!/^data:image\\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(data.avatarDataUrl) || data.avatarDataUrl.length > 180_000) {
+      if (!/^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(data.avatarDataUrl) || data.avatarDataUrl.length > 180_000) {
         throw new Error("Avatar must be a PNG, JPEG, or WebP image under the size limit.");
       }
     }
