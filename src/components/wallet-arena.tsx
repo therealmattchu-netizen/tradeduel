@@ -230,6 +230,18 @@ export function WalletArena() {
             // window.phantom.solana API or the legacy window.solana API.
             // The legacy API is accepted only when it positively identifies
             // itself as Phantom, so Backpack cannot capture this button.
+            // Prefer Wallet Standard's named Phantom registration. Its
+            // identity is wallet-specific and avoids shared injected-provider
+            // namespaces that can be claimed by another installed extension.
+            const standardPhantom = discoverStandardWallets().find(
+              (wallet) => wallet.name.trim().toLowerCase() === "phantom" &&
+                Boolean(wallet.features["standard:connect"]?.connect) &&
+                Boolean(wallet.features["solana:signMessage"]?.signMessage),
+            );
+            if (standardPhantom) {
+              void connectWallet({ name: "Phantom", standardWallet: standardPhantom });
+              return;
+            }
             const namespacedPhantom = window.phantom?.solana;
             const legacySolana = window.solana;
             const backpackProvider = window.backpack && "solana" in window.backpack
@@ -245,17 +257,6 @@ export function WalletArena() {
                   : undefined;
             if (phantomProvider) {
               void connectWallet({ name: "Phantom", provider: phantomProvider });
-              return;
-            }
-            // If Phantom exposes only Wallet Standard, use the exact registered
-            // wallet identity rather than a shared injected provider namespace.
-            const standardPhantom = discoverStandardWallets().find(
-              (wallet) => wallet.name.trim().toLowerCase() === "phantom" &&
-                Boolean(wallet.features["standard:connect"]) &&
-                Boolean(wallet.features["solana:signMessage"]),
-            );
-            if (standardPhantom) {
-              void connectWallet({ name: "Phantom", standardWallet: standardPhantom });
               return;
             }
             window.open("https://phantom.app/download", "_blank", "noopener,noreferrer");
