@@ -25,7 +25,7 @@ function discoverStandardWallets(): StandardWallet[] {
       const callback = (event as CustomEvent).detail;
       if (typeof callback === "function") callback(register);
     }) as EventListener);
-    window.dispatchEvent(new Event("wallet-standard:app-ready"));
+    window.dispatchEvent(new CustomEvent("wallet-standard:app-ready", { detail: register }));
   }
   return window.__tdStandardWallets;
 }
