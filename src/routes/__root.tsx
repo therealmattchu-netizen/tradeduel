@@ -100,7 +100,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
         <p style={{ color: "var(--td-muted)", lineHeight: 1.6, margin: "0 0 24px" }}>Something went wrong on our end. You can try again or head back home.</p>
         <div style={{ display: "flex", justifyContent: "center", gap: "10px", flexWrap: "wrap" }}>
           <button onClick={() => { router.invalidate(); reset(); }} style={{ border: 0, borderRadius: "8px", padding: "10px 16px", background: "var(--td-accent)", color: "var(--td-bg)", fontWeight: 700, cursor: "pointer" }}>Try again</button>
-          <a href="/" style={{ border: "1px solid #353b45", borderRadius: "8px", padding: "10px 16px", color: "var(--td-text)", textDecoration: "none" }}>Go home</a>
+          <a href="/" style={{ border: "1px solid var(--td-border)", borderRadius: "8px", padding: "10px 16px", color: "var(--td-text)", textDecoration: "none" }}>Go home</a>
         </div>
       </section>
     </main>
