@@ -999,7 +999,7 @@ export const listCustomMatches = createServerFn({ method: "GET" }).handler(async
       COUNT(mm.id) AS players_count
     FROM td_custom_matches m
     LEFT JOIN td_custom_match_members mm ON mm.match_id = m.id
-    WHERE m.status IN ('open','active')
+    WHERE m.status IN ('open','active') AND m.visibility = 'public'
     GROUP BY m.id
     ORDER BY CASE WHEN m.status='open' THEN 0 ELSE 1 END, m.created_at DESC
     LIMIT 100
@@ -1056,7 +1056,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     await DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(match.id,wallet,team).run();
     const after = await DB.prepare("SELECT COUNT(*) AS total FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number}>();
     if ((after?.total ?? 0) >= match.max_players) await DB.prepare("UPDATE td_custom_matches SET status='active' WHERE id=? AND status='open'").bind(match.id).run();
-    return { matchId:match.id, team, message:team===1?"Joined Team 1.":"Joined Team 2." };
+    return { matchId:match.id, team, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:team===1?"Joined Team 1.":"Joined Team 2." };
   });
 
 export const getCustomMatchChat = createServerFn({ method: "GET" })
