@@ -3,16 +3,6 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import svgr from "vite-plugin-svgr";
 import { defaultServerConditions, defineConfig } from "vite";
-import { fileURLToPath } from "node:url";
-
-// The vendored @higgsfield/quanta components import their glyphs from the private
-// Nexus-only `@higgsfield-ai/icons`. Generated sites build on the PUBLIC npm
-// registry, so we redirect every `@higgsfield-ai/icons/*` import to a lucide
-// shim instead (see src/lib/quanta-icons.ts). tsconfig.json has
-// the matching `paths` entry so type-checking resolves it too.
-const QUANTA_ICONS_SHIM = fileURLToPath(
-  new URL("./src/lib/quanta-icons.ts", import.meta.url),
-);
 
 export default defineConfig(({ command, mode }) => {
 
