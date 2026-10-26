@@ -130,7 +130,6 @@ export function WalletArena() {
   }, [token, queueStatus, loadMatches]);
 
   const connectWallet = async (choice: WalletChoice) => {
-    setWalletPickerOpen(false);
     setBusy(true); setNotice(`Waiting for ${choice.name} approval…`);
     try {
       let publicKey = "";
@@ -138,14 +137,17 @@ export function WalletArena() {
       if (choice.provider) {
         const provider = choice.provider;
         const connected = await provider.connect();
+        // Some injected providers resolve connect() without returning a key;
+        // read the provider's publicKey after the user approves the connection.
         publicKey = (connected && "publicKey" in connected ? connected.publicKey : undefined)?.toString() ?? provider.publicKey?.toString() ?? "";
-        if (!publicKey) throw new Error("The wallet did not return a public address. Disconnect and try again.");
+        if (!publicKey) throw new Error(`${choice.name} opened but did not return an address. Approve the connection in the wallet popup, then retry. If it is already connected, unlock the wallet and try again.`);
         const challenge = await createWalletChallenge({ data: { wallet: publicKey } });
         const signed = await provider.signMessage(new TextEncoder().encode(challenge.message), "utf8");
         signature = signed instanceof Uint8Array ? signed : signed.signature;
         const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
         window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
         setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(choice.name); setNotice("Wallet ownership verified. No transaction was sent.");
+        setWalletPickerOpen(false);
         return;
       }
       const candidate = choice.standardWallet;
@@ -163,7 +165,13 @@ export function WalletArena() {
       const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
       window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
       setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(choice.name); setNotice("Wallet ownership verified. No transaction was sent.");
-    } catch (e) { setNotice(e instanceof Error ? e.message : "Wallet connection failed. Try again."); }
+      setWalletPickerOpen(false);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Wallet connection failed. Try again.";
+      setNotice(`${choice.name}: ${message}`);
+      // Leave the selector open so the user can retry or choose another wallet.
+      setWalletPickerOpen(true);
+    }
     finally { setBusy(false); }
   };
 
