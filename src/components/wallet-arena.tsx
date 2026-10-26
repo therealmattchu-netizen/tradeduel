@@ -221,6 +221,7 @@ export function WalletArena() {
           <button type="button" className="td-text-button" aria-label="Close wallet selector" onClick={() => setWalletPickerOpen(false)}>Close ✕</button>
         </div>
         <p style={{ color: "#b9b5ca", fontSize: "13px", lineHeight: 1.5 }}>Select a detected wallet. TradeDuel asks you to sign a message to verify ownership; it will not send a transaction.</p>
+        <div role="note" style={{ marginTop: "12px", padding: "11px 12px", borderRadius: "10px", border: "1px solid rgba(245, 158, 11, 0.28)", background: "rgba(245, 158, 11, 0.08)", color: "#f4dfb1", fontSize: "12px", lineHeight: 1.55 }}><strong>Phantom compatibility note:</strong> To use Phantom with TradeDuel, Backpack must not be installed in your browser. Disable or uninstall Backpack, then reload this page before connecting Phantom.</div>
         {walletChoices.length > 0 ? <div style={{ display: "grid", gap: "8px", marginTop: "16px" }}>{walletChoices.map((choice) => <button type="button" key={choice.name} className="td-secondary-action" style={{ width: "100%", textAlign: "left", padding: "12px 14px" }} onClick={() => {
           // Resolve Phantom at click time from Phantom's own namespace. Never use
           // a cached choice or Wallet Standard entry for this button; those can
