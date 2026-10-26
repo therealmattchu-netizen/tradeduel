@@ -118,6 +118,7 @@ export function WalletArena() {
     if (savedToken && savedWallet) { setToken(savedToken); setWallet(savedWallet); setNotice("Wallet session restored in this tab."); }
   }, []);
 
+  const announceMatchFound = () => window.dispatchEvent(new CustomEvent("tradeduel:match-found"));
   const loadRating = useCallback(async (sessionToken: string) => { try { const result = await getMyRating({ data: { token: sessionToken } }); setRating(result); } catch { /* keep the rest of the wallet panel usable */ } }, []);
   const loadMatches = useCallback(async (sessionToken: string) => {
     try { const result = await getMyMatches({ data: { token: sessionToken } }); setMatches(result.matches as ArenaMatch[]); }
@@ -142,7 +143,7 @@ export function WalletArena() {
   useEffect(() => {
     if (!token || queueStatus !== "waiting") return;
     let alive = true;
-    const poll = async () => { try { const result = await getQueueStatus({ data: { token } }); if (!alive) return; setQueueStatus(result.status); if (result.status === "matched") { setNotice("Opponent found. Competitive test match started; official ELO is not active yet."); await loadMatches(token); } } catch { /* retry on next poll */ } };
+    const poll = async () => { try { const result = await getQueueStatus({ data: { token } }); if (!alive) return; const wasWaiting = queueStatus === "waiting"; setQueueStatus(result.status); if (result.status === "matched") { setNotice("Opponent found. Competitive test match started; official ELO is not active yet."); if (wasWaiting) announceMatchFound(); await loadMatches(token); } } catch { /* retry on next poll */ } };
     void poll(); const interval = window.setInterval(() => void poll(), 5000);
     return () => { alive = false; window.clearInterval(interval); };
   }, [token, queueStatus, loadMatches]);
@@ -202,7 +203,7 @@ export function WalletArena() {
   const joinQueue = async () => {
     if (!token) { setWalletChoices(getWalletChoices()); setWalletPickerOpen(true); return; }
     setBusy(true); setNotice("Joining matchmaking queue…");
-    try { const result = await joinMatchmakingQueue({ data: { token, format: gameMode, durationSeconds: duration } }); setQueueStatus(result.status === "matched" ? "matched" : "waiting"); setNotice(result.message); await loadMatches(token); }
+    try { const result = await joinMatchmakingQueue({ data: { token, format: gameMode, durationSeconds: duration } }); setQueueStatus(result.status === "matched" ? "matched" : "waiting"); setNotice(result.message); if (result.status === "matched") announceMatchFound(); await loadMatches(token); }
     catch (e) { setNotice(e instanceof Error ? e.message : "Could not join the queue."); }
     finally { setBusy(false); }
   };
