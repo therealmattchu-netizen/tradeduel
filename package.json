@@ -3,12 +3,8 @@
   "private": true,
   "sideEffects": false,
   "type": "module",
-  "workspaces": [
-    "packages/*"
-  ],
   "scripts": {
     "dev": "vite dev",
-    "dev:design": "HF_DESIGN_INSPECTOR=1 vite dev --mode design",
     "build": "bun run check:ui && tsr generate && tsc --noEmit && vite build",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
@@ -17,15 +13,10 @@
     "format": "prettier --write .",
     "typecheck": "tsr generate && tsc --noEmit",
     "check:ui": "node scripts/check-ui.mjs",
-    "check:adapted": "bun scripts/check-adaptation.mjs",
     "test": "bun test tests/*.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "1.5.0",
-    "@higgsfield/app-landing": "workspace:*",
-    "@higgsfield/fnf": "workspace:*",
-    "@higgsfield/fnf-react": "workspace:*",
-    "@higgsfield/quanta": "workspace:*",
     "@phosphor-icons/react": "^2.1.10",
     "@shadcn/react": "^0.2.1",
     "@tailwindcss/vite": "^4.3.2",
