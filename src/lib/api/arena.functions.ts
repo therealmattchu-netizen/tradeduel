@@ -442,11 +442,11 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   let match: SyncMatch | null = await DB.prepare("SELECT id, player_one, player_two, status, started_at, ends_at, verification_status FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(data.matchId, wallet, wallet).first<Omit<SyncMatch,"custom">>().then(row=>row?{...row,custom:false}:null);
   let participants: string[] = [];
   if (!match) {
-    const custom = await DB.prepare("SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string;started_at:string|null;ends_at:string|null;mode:string;max_players:number}>();
+    const custom = await DB.prepare("SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds,game_rule FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string;started_at:string|null;ends_at:string|null;mode:string;max_players:number;game_rule:string}>();
     const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
     if (!custom || !member) throw new Error("Match not found for this wallet.");
     const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string;team_number:number}>();
-    if (!custom.started_at || custom.status === "open") return {matchId:custom.id,indexed:0,events:[],accountingLedger:[],valuations:[],valuationObservations:[],fillCandidates:[],priceEvidence:[],status:"waiting_for_players",customRoom:{status:custom.status,startedAt:custom.started_at,endsAt:custom.ends_at,mode:custom.mode,maxPlayers:custom.max_players,members:members.results??[]},note:"Room is waiting for all player slots to fill. The match timer and transaction indexing begin together."};
+    if (!custom.started_at || custom.status === "open") return {matchId:custom.id,indexed:0,events:[],accountingLedger:[],valuations:[],valuationObservations:[],fillCandidates:[],priceEvidence:[],status:"waiting_for_players",customRoom:{status:custom.status,startedAt:custom.started_at,endsAt:custom.ends_at,mode:custom.mode,gameRule:custom.game_rule,maxPlayers:custom.max_players,members:members.results??[]},note:"Room is waiting for all player slots to fill. The match timer and transaction indexing begin together."};
     participants = [...new Set((members.results??[]).map(row=>row.wallet))];
     match = {id:custom.id,player_one:participants[0]??wallet,player_two:participants[1]??null,status:custom.status,started_at:custom.started_at,ends_at:custom.ends_at,verification_status:"unverified",custom:true,mode:custom.mode,max_players:custom.max_players};
   }
@@ -1093,6 +1093,7 @@ export const sendMatchChatMessage = createServerFn({ method: "POST" })
 
 
 const customMatchMode = z.enum(["head_to_head", "duo", "group"]);
+const customMatchRule = z.enum(["standard", "one_token_at_a_time", "max_bet", "free_trading"]);
 const customMatchVisibility = z.enum(["public", "private"]);
 
 /** Public/private room browser. Private room passwords are never returned to clients. */
@@ -1120,7 +1121,7 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
       "SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds FROM td_custom_matches WHERE id=?"
     ).bind(data.matchId).first<{
       id: string; status: string; started_at: string | null; ends_at: string | null;
-      mode: string; max_players: number; duration_seconds: number;
+      mode: string; max_players: number; duration_seconds: number; game_rule: string;
     }>();
     if (!match) throw new Error("This match does not exist.");
     const member = await DB.prepare(
@@ -1158,6 +1159,7 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
         startedAt,
         endsAt,
         mode: match.mode,
+        gameRule: match.game_rule,
         maxPlayers: match.max_players,
         members: currentMembers,
       },
@@ -1172,6 +1174,7 @@ export const createCustomMatch = createServerFn({ method: "POST" })
     visibility: customMatchVisibility,
     maxPlayers: z.number().int().refine((n) => [2,4,6,8].includes(n)),
     durationSeconds: z.number().int().min(900).max(86400),
+    gameRule: customMatchRule.default("standard"),
     password: z.string().max(80).optional(),
   }))
   .handler(async ({ data }) => {
@@ -1187,8 +1190,8 @@ export const createCustomMatch = createServerFn({ method: "POST" })
     const passwordHash = data.visibility === "private" ? await hash(password) : null;
     const team = data.mode === "head_to_head" ? 1 : 1;
     await DB.batch([
-      DB.prepare("INSERT INTO td_custom_matches (id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status) VALUES (?,?,?,?,?,?,?,'open')")
-        .bind(id,wallet,data.mode,data.visibility,data.maxPlayers,data.durationSeconds,passwordHash),
+      DB.prepare("INSERT INTO td_custom_matches (id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status,game_rule) VALUES (?,?,?,?,?,?,?,'open',?)")
+        .bind(id,wallet,data.mode,data.visibility,data.maxPlayers,data.durationSeconds,passwordHash,data.gameRule),
       DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(id,wallet,team),
     ]);
     return { matchId:id, message: data.visibility === "private" ? "Private match created. Share the room ID and password with your friends." : "Public match created and listed in the match browser." };
@@ -1198,11 +1201,11 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
   .validator(z.object({ token:z.string().min(24), matchId:z.string().uuid(), password:z.string().max(80).optional() }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    const match = await DB.prepare("SELECT id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status FROM td_custom_matches WHERE id=?").bind(data.matchId)
-      .first<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;duration_seconds:number;password_hash:string|null;status:string}>();
+    const match = await DB.prepare("SELECT id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status,game_rule FROM td_custom_matches WHERE id=?").bind(data.matchId)
+      .first<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;duration_seconds:number;password_hash:string|null;status:string;game_rule:string}>();
     if (!match) throw new Error("This match does not exist.");
     const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
-    if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"Already a member of this match." };
+    if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, gameRule:match.game_rule, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"Already a member of this match." };
     if (match.status !== "open") throw new Error("This match is no longer open for new players.");
     if (match.visibility === "private") {
       const provided = data.password?.trim() ?? "";
@@ -1225,7 +1228,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
       .bind(match.id).first<{ status: string }>();
     return {
       matchId: match.id, team, mode: match.mode, visibility: match.visibility,
-      maxPlayers: match.max_players, durationSeconds: match.duration_seconds,
+      maxPlayers: match.max_players, durationSeconds: match.duration_seconds, gameRule: match.game_rule,
       status: current?.status ?? match.status,
       message: (current?.status ?? match.status) === "active"
         ? "Lobby is full. The match has started."
