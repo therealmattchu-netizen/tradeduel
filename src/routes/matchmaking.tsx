@@ -27,7 +27,7 @@ function Matchmaking() {
       />
       <section className="td-match-layout" style={{ display: "block", "--td-accent":"var(--td-purple-accent)", "--td-border":"var(--td-purple-border)", "--td-panel":"var(--td-purple-panel)", "--td-text":"var(--td-purple-text)", "--td-accent-soft":"var(--td-purple-accent-soft)", "--td-bg":"var(--td-purple-bg)", "--td-muted":"var(--td-purple-muted)" } as React.CSSProperties}>
         <WalletArena authOnly />
-        <CustomMatchBrowser />
+        <div className="td-trading-hero" aria-label="Animated trading duel illustration"><div className="td-trading-grid" /><div className="td-hero-panel td-hero-panel-left"><span>PORTFOLIO / A</span><div className="td-hero-chart"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div><div className="td-hero-line"/></div><div className="td-hero-panel td-hero-panel-right"><span>PORTFOLIO / B</span><div className="td-hero-chart td-hero-chart-cyan"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div><div className="td-hero-line td-hero-line-cyan"/></div><div className="td-hero-versus">VS</div><div className="td-hero-footer"><b>● LIVE MARKETS</b><span>REAL-TIME DUELS</span><span>SOLANA</span></div></div><CustomMatchBrowser />
       </section>
     </SiteShell>
   );
