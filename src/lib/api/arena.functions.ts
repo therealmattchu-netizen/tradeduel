@@ -1044,7 +1044,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
       .first<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;password_hash:string|null;status:string}>();
     if (!match || match.status !== "open") throw new Error("This match is not open for new players.");
     const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
-    if (existing) return { matchId:match.id, team:existing.team_number, message:"You're already in this match." };
+    if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"You're already in this match." };
     if (match.visibility === "private") {
       const provided = data.password?.trim() ?? "";
       if (!provided || !match.password_hash || await hash(provided) !== match.password_hash) throw new Error("Incorrect private match password.");
