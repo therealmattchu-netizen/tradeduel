@@ -11,9 +11,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportApplicationError } from "../lib/error-reporting";
-// Page metadata (browser <title>/favicon + social og: tags) committed into the
-// repo by the marketplace meta API and read at BUILD time — no runtime fetch.
-// Editing it via the app settings UI rewrites this file and redeploys the app.
+// Page metadata for browser titles, favicons and social previews.
 import appMetaJson from "../app-meta.json";
 
 // Built-in defaults for any field that isn't set in app-meta.json.
@@ -36,30 +34,9 @@ const appMeta = appMetaJson as AppMeta;
 // og_image_url (when set) also drives the twitter card + image. Built from
 // inline tag literals (conditional spreads for the optional image/favicon) so
 // it matches the head() shape TanStack expects.
-// favicon/og images live in THIS app's own /assets, so the host is never
-// inherent. app-meta.json may carry an absolute higgsfield-app URL with a STALE
-// host — baked from the app this one was copied/remixed/renamed from — which would
-// serve the wrong app's favicon/og. Strip any higgsfield-app host (prod
-// higgsfield.app + dev higgsfield-dev.app) down to a root-relative path so it
-// always resolves against whoever serves THIS page (preview / prod / custom
-// domain). Genuinely external URLs (a CDN image the owner set) are left absolute.
-const APP_HOST_ZONES = ["higgsfield.app", "higgsfield-dev.app"];
-
 function toOwnAssetUrl(value: string | null | undefined): string | null {
-  if (!value) return null;
-  if (value.startsWith("/")) return value; // already root-relative
-  try {
-    const u = new URL(value);
-    const isAppHost = APP_HOST_ZONES.some(
-      (zone) => u.hostname === zone || u.hostname.endsWith(`.${zone}`),
-    );
-    if (isAppHost) return u.pathname + u.search;
-    return value; // external host (CDN, etc.) — keep absolute
-  } catch {
-    return value; // not a parseable URL — leave as-is
-  }
+  return value || null;
 }
-
 function buildHead(meta: AppMeta) {
   const title = meta.og_title ?? DEFAULT_TITLE;
   const description = meta.og_description ?? DEFAULT_DESCRIPTION;
