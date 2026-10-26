@@ -754,8 +754,8 @@ export const getMatchChatMessages = createServerFn({ method: "GET" })
   .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid(), afterId: z.number().int().min(0).optional() }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    const match = await DB.prepare("SELECT id,player_one,player_two,status FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(data.matchId, wallet, wallet).first<{id:string;player_one:string;player_two:string|null;status:string}>();
-    if (!match || !match.player_two) throw new Error("Chat is only available to players in this match.");
+    const match = await DB.prepare("SELECT id,player_one,player_two,status FROM td_matches WHERE id = ?").bind(data.matchId).first<{id:string;player_one:string;player_two:string|null;status:string}>();
+    if (!match || !match.player_two) throw new Error("Chat is unavailable until both players have joined this match.");
     const rows = await DB.prepare("SELECT id,wallet,message,created_at FROM td_match_chat_messages WHERE match_id = ? AND id > ? ORDER BY id ASC LIMIT 100").bind(match.id, data.afterId ?? 0).all<{id:number;wallet:string;message:string;created_at:string}>();
     return { messages: rows.results ?? [], matchStatus: match.status };
   });
@@ -767,8 +767,8 @@ export const sendMatchChatMessage = createServerFn({ method: "POST" })
     const { DB, wallet } = await requireSession(data.token);
     const message = data.message.trim();
     if (!message) throw new Error("Enter a message before sending.");
-    const match = await DB.prepare("SELECT id,player_one,player_two,status FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(data.matchId, wallet, wallet).first<{id:string;player_one:string;player_two:string|null;status:string}>();
-    if (!match || !match.player_two) throw new Error("Chat is only available to players in this match.");
+    const match = await DB.prepare("SELECT id,player_one,player_two,status FROM td_matches WHERE id = ?").bind(data.matchId).first<{id:string;player_one:string;player_two:string|null;status:string}>();
+    if (!match || !match.player_two) throw new Error("Chat is unavailable until both players have joined this match.");
     if (match.status === "completed" || match.status === "cancelled") throw new Error("Chat is closed because this match has ended.");
     await DB.prepare("INSERT INTO td_match_chat_messages (match_id,wallet,message) VALUES (?,?,?)").bind(match.id, wallet, message).run();
     const row = await DB.prepare("SELECT id,wallet,message,created_at FROM td_match_chat_messages WHERE match_id = ? AND wallet = ? ORDER BY id DESC LIMIT 1").bind(match.id, wallet).first<{id:number;wallet:string;message:string;created_at:string}>();
