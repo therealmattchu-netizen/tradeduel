@@ -373,12 +373,17 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       wallet,
       balanceSol: balanceResult.value / 1_000_000_000,
       signatures: signatures.map((sig) => ({ signature: sig.signature, blockTime: sig.blockTime, success: sig.err === null, confirmationStatus: sig.confirmationStatus })),
-      positions,
+      positions:trackedPositions,
       estimatedTokenValueUsd: unpricedPositions===0?pricedValue:null,
       unpricedPositions,
+      trackedBuyCount,
+      estimatedTotalSpentUsd:trackedSpend,
+      estimatedOpenPnlUsd:estimatedOpenPnl,
+      trackedPnlCoverage,
+      costBasisMethod:"Detected SOL-outflow swap candidates; cost uses current SOL/USD spot quote at first detection, not historical fill prices.",
       tradeActivity:tradeActivity.sort((a,b)=>(b.blockTime??0)-(a.blockTime??0)).slice(0,30),
       source: "Solana mainnet RPC + DexScreener spot quotes",
-      disclaimer: "Token inflow/outflow labels are candidates, not verified buys or sells. Transfers, airdrops, LP actions, and swaps can produce similar balance changes. USD values use current spot quotes and are not cost basis or profit/loss.",
+      disclaimer: "Buy tracking only records token inflows paired with SOL outflow and recognized swap-program evidence. Cost uses the SOL/USD quote available when first detected, not historical fill prices. Non-SOL swaps, old transactions outside the scan window, transfers, airdrops, sells and missing prices can make estimates incomplete. P&L is estimated for current remaining holdings, not audited realized profit/loss.",
     };
   });
 
