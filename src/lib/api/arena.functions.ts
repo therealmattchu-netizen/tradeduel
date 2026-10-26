@@ -795,3 +795,105 @@ export const sendMatchChatMessage = createServerFn({ method: "POST" })
     const row = await DB.prepare("SELECT id,wallet,message,created_at FROM td_match_chat_messages WHERE match_id = ? AND wallet = ? ORDER BY id DESC LIMIT 1").bind(match.id, wallet).first<{id:number;wallet:string;message:string;created_at:string}>();
     return { message: row };
   });
+
+
+const customMatchMode = z.enum(["head_to_head", "duo", "group"]);
+const customMatchVisibility = z.enum(["public", "private"]);
+
+/** Public/private room browser. Private room passwords are never returned to clients. */
+export const listCustomMatches = createServerFn({ method: "GET" }).handler(async () => {
+  const { DB } = bindings();
+  if (!DB) return { matches: [] };
+  const rows = await DB.prepare(`
+    SELECT m.id,m.creator_wallet,m.mode,m.visibility,m.max_players,m.duration_seconds,m.status,m.created_at,
+      COUNT(mm.id) AS players_count
+    FROM td_custom_matches m
+    LEFT JOIN td_custom_match_members mm ON mm.match_id = m.id
+    WHERE m.status IN ('open','active')
+    GROUP BY m.id
+    ORDER BY CASE WHEN m.status='open' THEN 0 ELSE 1 END, m.created_at DESC
+    LIMIT 100
+  `).all<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;duration_seconds:number;status:string;created_at:string;players_count:number}>();
+  return { matches: rows.results ?? [] };
+});
+
+export const createCustomMatch = createServerFn({ method: "POST" })
+  .validator(z.object({
+    token: z.string().min(24),
+    mode: customMatchMode,
+    visibility: customMatchVisibility,
+    maxPlayers: z.number().int().refine((n) => [2,4,6,8].includes(n)),
+    durationSeconds: z.number().int().min(900).max(86400),
+    password: z.string().max(80).optional(),
+  }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const expected = data.mode === "head_to_head" ? 2 : data.mode === "duo" ? 4 : data.maxPlayers;
+    if (data.maxPlayers !== expected || (data.mode === "group" && ![6,8].includes(data.maxPlayers))) {
+      throw new Error("Invalid player limit for the selected match mode.");
+    }
+    const password = data.password?.trim() ?? "";
+    if (data.visibility === "private" && password.length < 4) throw new Error("Private matches need a password of at least 4 characters.");
+    if (data.visibility === "public" && password) throw new Error("Public matches do not use passwords.");
+    const id = crypto.randomUUID();
+    const passwordHash = data.visibility === "private" ? await hash(password) : null;
+    const team = data.mode === "head_to_head" ? 1 : 1;
+    await DB.batch([
+      DB.prepare("INSERT INTO td_custom_matches (id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status) VALUES (?,?,?,?,?,?,?,'open')")
+        .bind(id,wallet,data.mode,data.visibility,data.maxPlayers,data.durationSeconds,passwordHash),
+      DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(id,wallet,team),
+    ]);
+    return { matchId:id, message: data.visibility === "private" ? "Private match created. Share the room ID and password with your friends." : "Public match created and listed in the match browser." };
+  });
+
+export const joinCustomMatch = createServerFn({ method: "POST" })
+  .validator(z.object({ token:z.string().min(24), matchId:z.string().uuid(), password:z.string().max(80).optional() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const match = await DB.prepare("SELECT id,creator_wallet,mode,visibility,max_players,password_hash,status FROM td_custom_matches WHERE id=?").bind(data.matchId)
+      .first<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;password_hash:string|null;status:string}>();
+    if (!match || match.status !== "open") throw new Error("This match is not open for new players.");
+    const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
+    if (existing) return { matchId:match.id, team:existing.team_number, message:"You're already in this match." };
+    if (match.visibility === "private") {
+      const provided = data.password?.trim() ?? "";
+      if (!provided || !match.password_hash || await hash(provided) !== match.password_hash) throw new Error("Incorrect private match password.");
+    }
+    const counts = await DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN team_number=1 THEN 1 ELSE 0 END) AS team_one FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number;team_one:number|null}>();
+    if ((counts?.total ?? 0) >= match.max_players) throw new Error("This match is full.");
+    const teamSize = match.mode === "head_to_head" ? 1 : match.max_players / 2;
+    const team = (counts?.team_one ?? 0) < teamSize ? 1 : 2;
+    await DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(match.id,wallet,team).run();
+    const after = await DB.prepare("SELECT COUNT(*) AS total FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number}>();
+    if ((after?.total ?? 0) >= match.max_players) await DB.prepare("UPDATE td_custom_matches SET status='active' WHERE id=? AND status='open'").bind(match.id).run();
+    return { matchId:match.id, team, message:team===1?"Joined Team 1.":"Joined Team 2." };
+  });
+
+export const getCustomMatchChat = createServerFn({ method: "GET" })
+  .validator(z.object({ token:z.string().min(24), matchId:z.string().uuid(), channel:z.enum(["all","team"]), afterId:z.number().int().min(0).optional() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const member = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{team_number:number}>();
+    if (!member) throw new Error("Join this match before viewing its chat.");
+    const rows = await DB.prepare(`
+      SELECT c.id,c.wallet,c.channel,c.message,c.created_at,m.team_number
+      FROM td_custom_match_chat c JOIN td_custom_match_members m ON m.match_id=c.match_id AND m.wallet=c.wallet
+      WHERE c.match_id=? AND c.channel=? AND c.id>?
+        AND (?='all' OR m.team_number=?)
+      ORDER BY c.id ASC LIMIT 100
+    `).bind(data.matchId,data.channel,data.afterId??0,data.channel,member.team_number).all<{id:number;wallet:string;channel:string;message:string;created_at:string;team_number:number}>();
+    return { messages:rows.results??[], team:member.team_number };
+  });
+
+export const sendCustomMatchChat = createServerFn({ method: "POST" })
+  .validator(z.object({ token:z.string().min(24), matchId:z.string().uuid(), channel:z.enum(["all","team"]), message:z.string().trim().min(1).max(500) }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const member = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{team_number:number}>();
+    if (!member) throw new Error("Join this match before sending chat messages.");
+    const match = await DB.prepare("SELECT status FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{status:string}>();
+    if (!match || match.status === "completed" || match.status === "cancelled") throw new Error("This match chat is closed.");
+    await DB.prepare("INSERT INTO td_custom_match_chat (match_id,wallet,channel,message) VALUES (?,?,?,?)").bind(data.matchId,wallet,data.channel,data.message.trim()).run();
+    const row = await DB.prepare("SELECT id,wallet,channel,message,created_at FROM td_custom_match_chat WHERE match_id=? AND wallet=? ORDER BY id DESC LIMIT 1").bind(data.matchId,wallet).first<{id:number;wallet:string;channel:string;message:string;created_at:string}>();
+    return { message:row, team:member.team_number };
+  });
