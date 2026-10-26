@@ -245,6 +245,8 @@ export const getPublicMatches = createServerFn({ method: "GET" }).handler(async 
 const SOLANA_MAINNET_RPCS = [
   "https://api.mainnet-beta.solana.com",
   "https://solana-rpc.publicnode.com",
+  "https://solana.drpc.org",
+  "https://rpc.ankr.com/solana",
 ] as const;
 
 /** Fail over between independent public mainnet RPCs when one is throttled or unavailable. */
@@ -1163,6 +1165,22 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
       },
       team: member.team_number,
     };
+  });
+
+export const surrenderCustomMatch = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const member = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?")
+      .bind(data.matchId, wallet).first<{team_number:number}>();
+    if (!member) throw new Error("You must be in this match to surrender.");
+    const room = await DB.prepare("SELECT status,mode FROM td_custom_matches WHERE id=?")
+      .bind(data.matchId).first<{status:string;mode:string}>();
+    if (!room) throw new Error("Match not found.");
+    if (room.status !== "active") throw new Error("Only an active match can be surrendered.");
+    await DB.prepare("UPDATE td_custom_matches SET status='completed',ends_at=COALESCE(ends_at,datetime('now')) WHERE id=? AND status='active'")
+      .bind(data.matchId).run();
+    return { ok: true, status: "completed", surrenderedBy: wallet };
   });
 
 export const createCustomMatch = createServerFn({ method: "POST" })
