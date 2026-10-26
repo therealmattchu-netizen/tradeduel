@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { createWalletChallenge, getMyMatches, getQueueStatus, joinMatchmakingQueue, leaveMatchmakingQueue, verifyWalletChallenge } from "@/lib/api/arena.functions";
+import { createWalletChallenge, getMyMatches, getMyRating, getQueueStatus, joinMatchmakingQueue, leaveMatchmakingQueue, verifyWalletChallenge } from "@/lib/api/arena.functions";
 
 type StandardWallet = {
   name: string;
@@ -103,6 +103,7 @@ export function WalletArena() {
   const [duration, setDuration] = useState(900);
   const [notice, setNotice] = useState("Connect your wallet to enter the matchmaking queue.");
   const [matches, setMatches] = useState<ArenaMatch[]>([]);
+  const [rating, setRating] = useState<{rating:number;wins:number;losses:number;draws:number;eloActive:boolean}|null>(null);
   const [walletProviderName, setWalletProviderName] = useState("");
   const [isWalletProviderAvailable, setIsWalletProviderAvailable] = useState<boolean | null>(null);
   const [walletPickerOpen, setWalletPickerOpen] = useState(false);
@@ -117,6 +118,7 @@ export function WalletArena() {
     if (savedToken && savedWallet) { setToken(savedToken); setWallet(savedWallet); setNotice("Wallet session restored in this tab."); }
   }, []);
 
+  const loadRating = useCallback(async (sessionToken: string) => { try { const result = await getMyRating({ data: { token: sessionToken } }); setRating(result); } catch { /* keep the rest of the wallet panel usable */ } }, []);
   const loadMatches = useCallback(async (sessionToken: string) => {
     try { const result = await getMyMatches({ data: { token: sessionToken } }); setMatches(result.matches as ArenaMatch[]); }
     catch { /* session may have expired; keep the page usable */ }
@@ -125,6 +127,7 @@ export function WalletArena() {
     if (!token) return;
     let alive = true;
     void loadMatches(token);
+    void loadRating(token);
     // Restore the server-side queue state when a saved wallet session returns,
     // including after a page refresh. The queue row may still be waiting/matched
     // even though the component's local state has reset to idle.
@@ -135,7 +138,7 @@ export function WalletArena() {
       else if (result.status === "matched") setNotice("Opponent found. This match does not score trading performance or change ELO.");
     }).catch(() => { /* expired sessions are handled when the user takes an action */ });
     return () => { alive = false; };
-  }, [token, loadMatches]);
+  }, [token, loadMatches, loadRating]);
   useEffect(() => {
     if (!token || queueStatus !== "waiting") return;
     let alive = true;
@@ -193,7 +196,7 @@ export function WalletArena() {
   const disconnect = async () => {
     // Clear the TradeDuel session locally. The selected provider may be a Wallet Standard wallet.
     window.sessionStorage.removeItem(TOKEN_KEY); window.sessionStorage.removeItem(WALLET_KEY);
-    setWallet(""); setToken(""); setWalletProviderName(""); setQueueStatus("idle"); setMatches([]); setNotice("Disconnected. Your wallet remains under your control.");
+    setWallet(""); setToken(""); setWalletProviderName(""); setRating(null); setQueueStatus("idle"); setMatches([]); setNotice("Disconnected. Your wallet remains under your control.");
   };
 
   const joinQueue = async () => {
@@ -213,7 +216,7 @@ export function WalletArena() {
 
   return <div className="td-wallet-arena">
     <div className="td-wallet-topline"><span className="td-mini-label">WALLET AUTHENTICATION</span><span className={`td-wallet-state ${wallet ? "is-connected" : ""}`}><i/>{wallet ? "VERIFIED SESSION" : "NOT CONNECTED"}</span></div>
-    {wallet ? <div className="td-connected-wallet"><span className="td-player-icon"><img src="/brand-mark-exact.png" alt=""/></span><div><span className="td-mini-label">CONNECTED {walletProviderName || "SOLANA"} WALLET</span><strong>{shortWallet(wallet)}</strong><small>Signed ownership verified · no transaction sent</small></div><button className="td-text-button" onClick={disconnect} disabled={busy}>Disconnect</button></div> : <div className="td-wallet-connect-copy"><h3>Bring your wallet.</h3><p>Connect a compatible Solana wallet and sign a one-time message. TradeDuel never asks for your seed phrase or private key.</p><button className="td-primary-action" onClick={() => { setWalletChoices(getWalletChoices()); setWalletPickerOpen(true); }} disabled={busy}>{busy ? "Please wait…" : "Choose a Solana wallet ↗"}</button>{isWalletProviderAvailable === false && <small>No compatible wallet detected yet. Choose a wallet below, install it, then reload this page.</small>}</div>}
+    {wallet ? <div className="td-connected-wallet"><span className="td-player-icon"><img src="/brand-mark-exact.png" alt=""/></span><div><span className="td-mini-label">CONNECTED {walletProviderName || "SOLANA"} WALLET</span><strong>{shortWallet(wallet)}</strong><small>Signed ownership verified · no transaction sent</small>{rating&&<div className="td-rating-counter" style={{marginTop:"10px",display:"flex",gap:"18px",flexWrap:"wrap"}}><span><small className="td-mini-label">YOUR RATING</small><strong>{rating.rating} ELO</strong></span><span><small className="td-mini-label">RECORD</small><strong>{rating.wins}W · {rating.losses}L · {rating.draws}D</strong></span><small>Starting rating only; ELO updates are not active yet.</small></div>}</div><button className="td-text-button" onClick={disconnect} disabled={busy}>Disconnect</button></div> : <div className="td-wallet-connect-copy"><h3>Bring your wallet.</h3><p>Connect a compatible Solana wallet and sign a one-time message. TradeDuel never asks for your seed phrase or private key.</p><button className="td-primary-action" onClick={() => { setWalletChoices(getWalletChoices()); setWalletPickerOpen(true); }} disabled={busy}>{busy ? "Please wait…" : "Choose a Solana wallet ↗"}</button>{isWalletProviderAvailable === false && <small>No compatible wallet detected yet. Choose a wallet below, install it, then reload this page.</small>}</div>}
     {!wallet && walletPickerOpen && <div role="dialog" aria-modal="true" aria-labelledby="td-wallet-picker-title" style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(5, 7, 15, 0.78)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px" }} onClick={(event) => { if (event.target === event.currentTarget) setWalletPickerOpen(false); }}>
       <div style={{ width: "100%", maxWidth: "420px", border: "1px solid rgba(167, 139, 250, 0.35)", borderRadius: "16px", padding: "22px", background: "#11101b", color: "#f7f5ff", boxShadow: "0 24px 80px rgba(0,0,0,0.45)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px" }}>
