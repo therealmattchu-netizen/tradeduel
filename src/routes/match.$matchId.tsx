@@ -29,9 +29,9 @@ function MatchRoom() {
     const positions=(latest?.tokenBalances??[]).filter(p=>p.amount>0).sort((a,b)=>(b.valueUsd??-1)-(a.valueUsd??-1));
     const money=(n:number|null|undefined)=>n==null?"Unpriced":"$"+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2});
     const compact=(n:number|null|undefined)=>n==null?"—":n>=1e9?"$"+(n/1e9).toFixed(2)+"B":n>=1e6?"$"+(n/1e6).toFixed(2)+"M":n>=1e3?"$"+(n/1e3).toFixed(1)+"K":money(n);
-    return <section key={player} style={{minWidth:0,border:"1px solid var(--td-border,rgba(255,255,255,.12))",borderRadius:12,padding:12}}>
+    return <section key={player} style={{minWidth:0,border:"1px solid var(--td-border,transparent)",borderRadius:12,padding:12}}>
      <strong>{player===match.player_one?"PLAYER ONE":"PLAYER TWO"} · {shortWallet(player)}</strong>
-     {!latest?<p style={{opacity:.7}}>Waiting for first wallet snapshot.</p>:positions.length===0?<p style={{opacity:.7}}>No priced token holdings found in latest snapshot.</p>:positions.slice(0,12).map(p=><div key={p.mint} style={{padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,.08)",overflowWrap:"anywhere"}}>
+     {!latest?<p style={{opacity:.7}}>Waiting for first wallet snapshot.</p>:positions.length===0?<p style={{opacity:.7}}>No priced token holdings found in latest snapshot.</p>:positions.slice(0,12).map(p=><div key={p.mint} style={{padding:"10px 0",borderBottom:"1px solid var(--td-border-subtle,transparent)",overflowWrap:"anywhere"}}>
       <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"center"}}><a href={"https://pump.fun/coin/"+p.mint} target="_blank" rel="noreferrer">{p.mint.slice(0,6)}…{p.mint.slice(-4)} ↗</a><strong>{money(p.valueUsd)}</strong></div>
       <div style={{fontSize:12,opacity:.8,display:"flex",flexWrap:"wrap",gap:"4px 12px",marginTop:4}}><span>Held: {p.amount.toLocaleString(undefined,{maximumFractionDigits:5})}</span><span>Price: {money(p.priceUsd)}</span><span>Market cap: {compact(p.marketCapUsd)}</span></div>
      </div>)}
