@@ -15,7 +15,7 @@
 
 @custom-variant dark (&:where([data-theme="default-dark"], [data-theme="default-dark"] *));
 
-:root { --td-bg: #080a0d; --td-text: #f5f7fa; --td-muted: #a4abb6; --td-border: #353b45; --td-accent: #c7f36b; --td-surface: #11151b; --td-surface-raised: #171c24; }
+:root { --td-purple-accent: #a56bff; --td-purple-border: #302052; --td-purple-panel: #0d0a1c; --td-purple-text: #f4efff; --td-purple-accent-soft: rgba(151,76,255,.16); --td-purple-bg: #070612; --td-purple-muted: #b2a4d0; --td-on-accent: #ffffff; --td-bg: #080a0d; --td-text: #f5f7fa; --td-muted: #a4abb6; --td-border: #353b45; --td-accent: #c7f36b; --td-surface: #11151b; --td-surface-raised: #171c24; }
 
 /*
  * Quanta is the visual source of truth. This file imports Quanta's Tailwind
