@@ -1042,9 +1042,10 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     const { DB, wallet } = await requireSession(data.token);
     const match = await DB.prepare("SELECT id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status FROM td_custom_matches WHERE id=?").bind(data.matchId)
       .first<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;duration_seconds:number;password_hash:string|null;status:string}>();
-    if (!match || match.status !== "open") throw new Error("This match is not open for new players.");
+    if (!match) throw new Error("This match does not exist.");
     const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
-    if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"You're already in this match." };
+    if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"Already a member of this match." };
+    if (match.status !== "open") throw new Error("This match is no longer open for new players.");
     if (match.visibility === "private") {
       const provided = data.password?.trim() ?? "";
       if (!provided || !match.password_hash || await hash(provided) !== match.password_hash) throw new Error("Incorrect private match password.");
