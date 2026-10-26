@@ -228,13 +228,21 @@ export function WalletArena() {
           // a cached choice or Wallet Standard entry for this button; those can
           // be supplied/misidentified by another extension.
           if (choice.name === "Phantom") {
-            const phantomProvider = window.phantom?.solana;
+            // Phantom can expose its provider through either the namespaced
+            // window.phantom.solana API or the legacy window.solana API.
+            // The legacy API is accepted only when it positively identifies
+            // itself as Phantom, so Backpack cannot capture this button.
+            const phantomProvider =
+              window.phantom?.solana ??
+              (window.solana?.isPhantom && !window.solana.isBackpack ? window.solana : undefined);
             if (phantomProvider && !phantomProvider.isBackpack) {
               void connectWallet({ name: "Phantom", provider: phantomProvider });
               return;
             }
-            window.open("https://phantom.app/", "_blank", "noopener,noreferrer");
-            setNotice("Phantom's dedicated browser extension provider was not detected. Install or enable Phantom, then reload TradeDuel. TradeDuel will not route this button through Backpack.");
+            // Open the official Phantom site in the click gesture (not an
+            // asynchronous callback), which avoids popup blockers.
+            window.open("https://phantom.app/download", "_blank", "noopener,noreferrer");
+            setNotice("Phantom was not detected in this browser. Install or enable the Phantom extension, then reload TradeDuel. The Phantom button will not connect through Backpack.");
             return;
           }
           if (!choice.provider && !choice.standardWallet && choice.name === "Backpack") {
