@@ -84,6 +84,7 @@ function getWalletChoices(): WalletChoice[] {
   // Show explicit install fallbacks rather than routing one wallet's button
   // through another extension's generic provider.
   if (!choices.some((item) => item.name.toLowerCase() === "phantom")) choices.push({ name: "Phantom" });
+  if (!choices.some((item) => item.name.toLowerCase() === "solflare")) choices.push({ name: "Solflare" });
   if (!choices.some((item) => item.name.toLowerCase() === "backpack")) choices.push({ name: "Backpack" });
   return choices;
 }
@@ -271,6 +272,11 @@ export function WalletArena({ authOnly = false }: { authOnly?: boolean } = {}) {
               : "Phantom's provider was not detected in this browser. Enable/install the Phantom extension, then reload TradeDuel.");
             return;
           }
+          if (choice.name === "Solflare" && !choice.provider && !choice.standardWallet) {
+            window.open("https://solflare.com/", "_blank", "noopener,noreferrer");
+            setNotice("Solflare's wallet provider was not detected. Install or enable the Solflare extension, then reload TradeDuel.");
+            return;
+          }
           if (choice.name === "Backpack" && !choice.provider && !choice.standardWallet) {
             window.open("https://backpack.app/", "_blank", "noopener,noreferrer");
             setNotice("Backpack's provider was not detected. Open or install Backpack, then reload TradeDuel.");
@@ -284,7 +290,7 @@ export function WalletArena({ authOnly = false }: { authOnly?: boolean } = {}) {
             }
           }
           void connectWallet(choice);
-        }} disabled={busy}>{choice.name}{!choice.provider && !choice.standardWallet && (choice.name === "Backpack" || choice.name === "Phantom") ? " · Install / reload" : ""}<span style={{ float: "right" }}>↗</span></button>)}</div> : <p style={{ fontSize: "13px", color: "#b9b5ca" }}>No compatible wallet was detected in this browser.</p>}
+        }} disabled={busy}>{choice.name}{!choice.provider && !choice.standardWallet && (choice.name === "Backpack" || choice.name === "Phantom" || choice.name === "Solflare") ? " · Install / reload" : ""}<span style={{ float: "right" }}>↗</span></button>)}</div> : <p style={{ fontSize: "13px", color: "#b9b5ca" }}>No compatible wallet was detected in this browser.</p>}
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", marginTop: "18px", paddingTop: "14px" }}>
           <span className="td-mini-label">GET A WALLET</span>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "8px", fontSize: "13px" }}>
