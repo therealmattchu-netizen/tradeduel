@@ -519,6 +519,24 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     // remain available for display, but raw deltas are the canonical evidence value.
     const tokenDeltas = tokenBalanceDeltas(tx.meta.preTokenBalances ?? [], tx.meta.postTokenBalances ?? [], trackedWallet)
       .map(({ mint, amount, rawDelta, decimals }) => ({ mint, amount, rawDelta, decimals }));
+    const feeLamports = Number(tx.meta.fee ?? 0);
+    const programIds = [...new Set(allInstructions.map((ix:any)=>resolveInstructionProgramId(ix, keys, tx.meta?.loadedAddresses)).filter((id:any):id is string=>typeof id==="string"))];
+    const protocols = identifySwapProtocol(programIds);
+    const instructionNames = logMessages.filter((line) => line.includes("Program log: Instruction:")).map((line) => line.split("Program log: Instruction:")[1]?.trim() ?? "");
+    const hasLifecycleEffects = instructionNames.some((name)=>/createaccount|initializeaccount|closeaccount|syncnative/i.test(name)) || allInstructions.some((ix:any)=>/createAccount|closeAccount|initializeAccount/i.test(String(ix.parsed?.type??"")));
+    const ledger = buildAccountingLedgerSummary({
+      success: sig.tx_error_json === null,
+      nativeDeltaLamports: postSol-preSol,
+      feeLamports,
+      walletIsFeePayer: index===0,
+      tokenDeltas,
+      externalFlows: [],
+      protocols,
+      hasLifecycleEffects,
+    });
+    await DB.prepare("INSERT OR IGNORE INTO td_match_accounting_ledger (match_id,wallet,signature,slot,block_time,success,fee_lamports,native_delta_lamports,native_delta_ex_fee_lamports,token_deltas_json,external_flows_json,protocols_json,evidence_level,blockers_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.tx_error_json===null?1:0,ledger.feeLamports,ledger.nativeDeltaLamports,ledger.nativeDeltaExFeeLamports,JSON.stringify(ledger.tokenDeltas),JSON.stringify(ledger.externalFlows),JSON.stringify(ledger.protocols),ledger.evidenceLevel,JSON.stringify([...new Set([...ledger.blockers,"external_transfer_analysis_not_yet_complete"])]))
+      .run();
     const signatureFailed = sig.tx_error_json !== null;
     const eventType = signatureFailed ? "failed" : isBuy ? "pump_fun_buy_candidate" : isSell ? "pump_fun_sell_candidate" : pumpRelated ? "pump_fun_instruction_unclassified" : tokenDeltas.length ? "token_activity" : "sol_activity";
     await DB.prepare("INSERT OR IGNORE INTO td_match_events (match_id,wallet,signature,block_time,slot,success,pump_fun_related,sol_delta,token_deltas_json,event_type) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(match.id,trackedWallet,sig.signature,sig.block_time,sig.slot,signatureFailed?0:1,pumpRelated?1:0,(postSol-preSol)/1e9,JSON.stringify(tokenDeltas),eventType).run();
