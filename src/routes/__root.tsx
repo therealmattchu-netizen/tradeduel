@@ -101,12 +101,12 @@ function buildHead(meta: AppMeta) {
 
 function NotFoundComponent() {
   return (
-    <main style={{ minHeight: "100dvh", display: "grid", placeItems: "center", padding: "24px", background: "#080a0d", color: "#f5f7fa", fontFamily: "Inter, Arial, sans-serif" }}>
+    <main style={{ minHeight: "100dvh", display: "grid", placeItems: "center", padding: "24px", background: "var(--td-bg)", color: "var(--td-text)", fontFamily: "Inter, Arial, sans-serif" }}>
       <section style={{ maxWidth: "420px", textAlign: "center" }}>
-        <p style={{ fontSize: "56px", lineHeight: 1, fontWeight: 800, margin: "0 0 16px", color: "#c7f36b" }}>404</p>
+        <p style={{ fontSize: "56px", lineHeight: 1, fontWeight: 800, margin: "0 0 16px", color: "var(--td-accent)" }}>404</p>
         <h1 style={{ fontSize: "24px", fontWeight: 700, margin: "0 0 8px" }}>Page not found</h1>
-        <p style={{ color: "#a4abb6", lineHeight: 1.6, margin: "0 0 24px" }}>The page you're looking for doesn't exist or has been moved.</p>
-        <Link to="/" style={{ display: "inline-block", padding: "10px 16px", borderRadius: "8px", background: "#c7f36b", color: "#10130a", fontWeight: 700, textDecoration: "none" }}>Go home</Link>
+        <p style={{ color: "var(--td-muted)", lineHeight: 1.6, margin: "0 0 24px" }}>The page you're looking for doesn't exist or has been moved.</p>
+        <Link to="/" style={{ display: "inline-block", padding: "10px 16px", borderRadius: "8px", background: "var(--td-accent)", color: "var(--td-bg)", fontWeight: 700, textDecoration: "none" }}>Go home</Link>
       </section>
     </main>
   );
@@ -120,13 +120,13 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   }, [error]);
 
   return (
-    <main style={{ minHeight: "100dvh", display: "grid", placeItems: "center", padding: "24px", background: "#080a0d", color: "#f5f7fa", fontFamily: "Inter, Arial, sans-serif" }}>
+    <main style={{ minHeight: "100dvh", display: "grid", placeItems: "center", padding: "24px", background: "var(--td-bg)", color: "var(--td-text)", fontFamily: "Inter, Arial, sans-serif" }}>
       <section style={{ maxWidth: "440px", textAlign: "center" }}>
         <h1 style={{ fontSize: "24px", fontWeight: 700, margin: "0 0 8px" }}>This page didn't load</h1>
-        <p style={{ color: "#a4abb6", lineHeight: 1.6, margin: "0 0 24px" }}>Something went wrong on our end. You can try again or head back home.</p>
+        <p style={{ color: "var(--td-muted)", lineHeight: 1.6, margin: "0 0 24px" }}>Something went wrong on our end. You can try again or head back home.</p>
         <div style={{ display: "flex", justifyContent: "center", gap: "10px", flexWrap: "wrap" }}>
-          <button onClick={() => { router.invalidate(); reset(); }} style={{ border: 0, borderRadius: "8px", padding: "10px 16px", background: "#c7f36b", color: "#10130a", fontWeight: 700, cursor: "pointer" }}>Try again</button>
-          <a href="/" style={{ border: "1px solid #353b45", borderRadius: "8px", padding: "10px 16px", color: "#f5f7fa", textDecoration: "none" }}>Go home</a>
+          <button onClick={() => { router.invalidate(); reset(); }} style={{ border: 0, borderRadius: "8px", padding: "10px 16px", background: "var(--td-accent)", color: "var(--td-bg)", fontWeight: 700, cursor: "pointer" }}>Try again</button>
+          <a href="/" style={{ border: "1px solid #353b45", borderRadius: "8px", padding: "10px 16px", color: "var(--td-text)", textDecoration: "none" }}>Go home</a>
         </div>
       </section>
     </main>
@@ -151,7 +151,7 @@ function RootShell({ children }: { children: ReactNode }) {
       <head>
         <HeadContent />
       </head>
-      <body style={{ background: "#080a0d", color: "#f5f7fa" }}>
+      <body style={{ background: "var(--td-bg)", color: "var(--td-text)" }}>
         {children}
         <Scripts />
       </body>
