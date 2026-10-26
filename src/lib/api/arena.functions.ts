@@ -242,44 +242,59 @@ export const getPublicMatches = createServerFn({ method: "GET" }).handler(async 
   return { matches: result.results ?? [] };
 });
 
-const SOLANA_MAINNET_RPCS = [
+const PUBLIC_SOLANA_MAINNET_RPCS = [
   "https://api.mainnet-beta.solana.com",
   "https://solana-rpc.publicnode.com",
   "https://solana.drpc.org",
   "https://rpc.ankr.com/solana",
 ] as const;
 
-/** Fail over between independent public mainnet RPCs when one is throttled or unavailable. */
+function solanaRpcEndpoints(): string[] {
+  const configured = (bindings().SOLANA_RPC_URLS ?? bindings().SOLANA_RPC_URL ?? "")
+    .split(/[\\s,;]+/).map(value => value.trim()).filter(Boolean);
+  const unique = [...new Set([...configured, ...PUBLIC_SOLANA_MAINNET_RPCS])];
+  // Rotate the first provider between requests so a throttled public endpoint
+  // does not receive every request first. Configured paid endpoints take priority.
+  const offset = Math.floor(Date.now() / 15000) % Math.max(unique.length, 1);
+  return [...unique.slice(offset), ...unique.slice(0, offset)];
+}
+
+/** RPC failover: try configured providers first, then independent public fallbacks.
+ * A provider returning an RPC error or HTTP throttle is never treated as valid data. */
 async function solanaRpcCall(method: string, params: unknown[]) {
   const failures: string[] = [];
-  for (const endpoint of SOLANA_MAINNET_RPCS) {
-    try {
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!response.ok) {
-        failures.push(`${new URL(endpoint).hostname}: HTTP ${response.status}`);
-        continue;
+  const endpoints = solanaRpcEndpoints();
+  for (const endpoint of endpoints) {
+    let lastFailure = "request failed";
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          signal: AbortSignal.timeout(4500),
+        });
+        if (response.status === 429 || response.status >= 500) {
+          lastFailure = `HTTP ${response.status}`;
+          if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1))); continue; }
+          break;
+        }
+        if (!response.ok) { lastFailure = `HTTP ${response.status}`; break; }
+        const json = await response.json() as { result?: unknown; error?: { code?: number; message?: string } };
+        if (json.error) { lastFailure = json.error.message || "RPC error"; break; }
+        if (!("result" in json)) { lastFailure = "missing result"; break; }
+        return json.result;
+      } catch (error) {
+        lastFailure = error instanceof Error ? error.message : "request failed";
+        if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, 150)); continue; }
       }
-      const json = await response.json() as { result?: unknown; error?: { code?: number; message?: string } };
-      if (json.error) {
-        failures.push(`${new URL(endpoint).hostname}: ${json.error.message || "RPC error"}`);
-        continue;
-      }
-      if (!("result" in json)) {
-        failures.push(`${new URL(endpoint).hostname}: missing result`);
-        continue;
-      }
-      return json.result;
-    } catch (error) {
-      failures.push(`${new URL(endpoint).hostname}: ${error instanceof Error ? error.message : "request failed"}`);
     }
+    let host = "invalid-endpoint";
+    try { host = new URL(endpoint).hostname; } catch {}
+    failures.push(`${host}: ${lastFailure}`);
   }
-  console.error("Solana mainnet RPC providers failed", { method, failures });
-  throw new Error("Solana mainnet RPC providers are temporarily unavailable. Please retry in a moment.");
+  console.error("Solana mainnet RPC providers failed", { method, providerCount: endpoints.length, failures });
+  throw new Error("Solana mainnet RPC is temporarily unavailable across all configured providers. Configure a dedicated Solana RPC URL for production and retry.");
 }
 
 export const trackPublicWallet = createServerFn({ method: "POST" })
