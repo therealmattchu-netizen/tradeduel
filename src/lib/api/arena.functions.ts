@@ -312,7 +312,7 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
     }
     const signatures = signatureResult;
     const tradeActivity: Array<{signature:string;blockTime:number|null;mint:string;amount:number;direction:"inflow_candidate"|"outflow_candidate";programIds:string[]}> = [];
-    const buyCandidates: Array<{signature:string;blockTime:number|null;mint:string;amount:number;solSpent:number}> = [];
+    const buyCandidates: Array<{signature:string;blockTime:number|null;mint:string;amount:number;quoteAsset:"SOL"|"USDC";quoteAmount:number;estimatedCostUsd:number|null}> = [];
     // Inspect a bounded recent window for wallet token balance changes. These are
     // activity candidates; transfers, airdrops, LP actions, and swaps can look alike.
     const txResults = await Promise.all(signatures.slice(0,12).map(async sig => {
@@ -333,9 +333,19 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       const deltas=new Map<string,number>(); for(const mint of new Set([...preByMint.keys(),...postByMint.keys()])) deltas.set(mint,(postByMint.get(mint)??0)-(preByMint.get(mint)??0));
       const programIds: string[]=[...new Set<string>((tx.transaction?.message?.instructions??[]).map((ix:any)=>String(ix.programId??"")).filter((id:string)=>Boolean(id)))];
       for(const inner of tx.meta.innerInstructions??[]) for(const ix of inner.instructions??[]) if(ix.programId) programIds.push(String(ix.programId));
-      const preLamports=Number(tx.meta.preBalances?.[walletIndex]??0); const postLamports=Number(tx.meta.postBalances?.[walletIndex]??0); const feeLamports=walletIndex===0?Number(tx.meta.fee??0):0; const solSpent=Math.max(0,(preLamports-postLamports-feeLamports)/1e9);
+      const feeLamports=keys[0]===wallet?Number(tx.meta.fee??0):0;
+      const preLamports=Number(tx.meta.preBalances?.[walletIndex]??0); const postLamports=Number(tx.meta.postBalances?.[walletIndex]??0); const solSpent=Math.max(0,(preLamports-postLamports-feeLamports)/1e9);
+      const usdcMint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+      const usdcDelta=deltas.get(usdcMint)??0;
+      const usdcSpent=Math.max(0,-usdcDelta);
       const looksLikeSwap=programIds.some((id:string)=>/JUP|whirLb|675kPX9MHTjS2zt1qfr1NYHuzefy|pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA|6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P/i.test(id));
-      for(const [mint,amount] of deltas) if(Number.isFinite(amount)&&Math.abs(amount)>1e-10){ tradeActivity.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,direction:amount>0?"inflow_candidate":"outflow_candidate",programIds:[...new Set<string>(programIds)]}); if(amount>0&&solSpent>0&&looksLikeSwap)buyCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,solSpent}); }
+      for(const [mint,amount] of deltas) if(Number.isFinite(amount)&&Math.abs(amount)>1e-10){
+        tradeActivity.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,direction:amount>0?"inflow_candidate":"outflow_candidate",programIds:[...new Set<string>(programIds)]});
+        if(amount>0&&looksLikeSwap&&mint!==usdcMint){
+          if(usdcSpent>0) buyCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,quoteAsset:"USDC",quoteAmount:usdcSpent,estimatedCostUsd:usdcSpent});
+          else if(solSpent>0) buyCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,quoteAsset:"SOL",quoteAmount:solSpent,estimatedCostUsd:null});
+        }
+      }
     }
     const mints=[...holdings.keys()].slice(0,30);
     const prices=new Map<string,{priceUsd:number|null;liquidityUsd:number|null;pairUrl:string|null}>();
