@@ -37,7 +37,7 @@ export function SiteAudio() {
     prefsRef.current = prefs;
     try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* Settings still work for this session. */ }
     if (musicGainRef.current && audioRef.current) {
-      const target = prefs.music ? (sceneRef.current === "duel" ? 0.018 : 0.012) : 0;
+      const target = prefs.music ? (sceneRef.current === "duel" ? 0.085 : 0.055) : 0;
       musicGainRef.current.gain.setTargetAtTime(target, audioRef.current.currentTime, 0.8);
     }
   }, [prefs]);
@@ -45,7 +45,7 @@ export function SiteAudio() {
   useEffect(() => {
     sceneRef.current = scene;
     if (musicGainRef.current && audioRef.current) {
-      musicGainRef.current.gain.setTargetAtTime(prefsRef.current.music ? (scene === "duel" ? 0.018 : 0.012) : 0, audioRef.current.currentTime, 1.4);
+      musicGainRef.current.gain.setTargetAtTime(prefsRef.current.music ? (scene === "duel" ? 0.085 : 0.055) : 0, audioRef.current.currentTime, 1.4);
     }
   }, [scene]);
 
@@ -60,7 +60,7 @@ export function SiteAudio() {
       master.gain.value = 1;
       master.connect(ctx.destination);
       const musicGain = ctx.createGain();
-      musicGain.gain.value = prefsRef.current.music ? (sceneRef.current === "duel" ? 0.018 : 0.012) : 0;
+      musicGain.gain.value = prefsRef.current.music ? (sceneRef.current === "duel" ? 0.085 : 0.055) : 0;
       musicGain.connect(master);
       musicGainRef.current = musicGain;
       const notes = sceneRef.current === "duel" ? [55, 82.41, 110] : [65.41, 98, 130.81];
@@ -72,7 +72,7 @@ export function SiteAudio() {
         osc.frequency.value = frequency;
         filter.type = "lowpass";
         filter.frequency.value = sceneRef.current === "duel" ? 180 : 240;
-        voiceGain.gain.value = index === 0 ? 0.35 : 0.16;
+        voiceGain.gain.value = index === 0 ? 0.5 : 0.28;
         osc.connect(filter);
         filter.connect(voiceGain);
         voiceGain.connect(musicGain);
@@ -98,15 +98,15 @@ export function SiteAudio() {
       const oscillator = ctx.createOscillator();
       const gain = ctx.createGain();
       oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(620, ctx.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(420, ctx.currentTime + 0.055);
+      oscillator.frequency.setValueAtTime(740, ctx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(520, ctx.currentTime + 0.075);
       gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.022, ctx.currentTime + 0.008);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.075);
+      gain.gain.exponentialRampToValueAtTime(0.075, ctx.currentTime + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
       oscillator.connect(gain);
       gain.connect(ctx.destination);
       oscillator.start();
-      oscillator.stop(ctx.currentTime + 0.08);
+      oscillator.stop(ctx.currentTime + 0.13);
     };
     document.addEventListener("pointerdown", onFirstGesture, { once: true, capture: true });
     document.addEventListener("click", onClick, true);
@@ -126,6 +126,7 @@ export function SiteAudio() {
       <span style={{ fontSize: 10, letterSpacing: "0.12em", color: "var(--td-muted)", padding: "0 4px" }}>{scene === "duel" ? "DUEL AUDIO" : "LOBBY AUDIO"}</span>
       <button type="button" aria-pressed={prefs.music} onClick={() => toggle("music")} style={{ border: "1px solid var(--td-border)", background: prefs.music ? "var(--td-accent-soft)" : "transparent", color: "var(--td-text)", padding: "7px 9px", borderRadius: 5, fontSize: 11, cursor: "pointer" }}>{prefs.music ? "Music on" : "Music off"}</button>
       <button type="button" aria-pressed={prefs.effects} onClick={() => toggle("effects")} style={{ border: "1px solid var(--td-border)", background: prefs.effects ? "var(--td-accent-soft)" : "transparent", color: "var(--td-text)", padding: "7px 9px", borderRadius: 5, fontSize: 11, cursor: "pointer" }}>{prefs.effects ? "SFX on" : "SFX off"}</button>
+      <button type="button" onClick={() => { const ctx = ensureAudio(); if (!ctx) return; const oscillator = ctx.createOscillator(); const gain = ctx.createGain(); oscillator.type = "sine"; oscillator.frequency.setValueAtTime(740, ctx.currentTime); oscillator.frequency.exponentialRampToValueAtTime(520, ctx.currentTime + 0.09); gain.gain.setValueAtTime(0.0001, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.075, ctx.currentTime + 0.01); gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.15); oscillator.connect(gain); gain.connect(ctx.destination); oscillator.start(); oscillator.stop(ctx.currentTime + 0.16); }} style={{ border: "1px solid var(--td-border)", background: "transparent", color: "var(--td-text)", padding: "7px 9px", borderRadius: 5, fontSize: 11, cursor: "pointer" }}>Test sound</button>
       {!started && <span style={{ fontSize: 9, color: "var(--td-muted)" }}>Click to enable</span>}
     </aside>
   );
