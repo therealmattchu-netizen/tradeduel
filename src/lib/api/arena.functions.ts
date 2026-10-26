@@ -1112,6 +1112,37 @@ export const listCustomMatches = createServerFn({ method: "GET" }).handler(async
   return { matches: rows.results ?? [] };
 });
 
+export const getCustomMatchStatus = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const match = await DB.prepare(
+      "SELECT id,status,started_at,ends_at,mode,max_players FROM td_custom_matches WHERE id=?"
+    ).bind(data.matchId).first<{
+      id: string; status: string; started_at: string | null; ends_at: string | null;
+      mode: string; max_players: number;
+    }>();
+    if (!match) throw new Error("This match does not exist.");
+    const member = await DB.prepare(
+      "SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?"
+    ).bind(match.id, wallet).first<{ team_number: number }>();
+    if (!member) throw new Error("Join this match before viewing its status.");
+    const members = await DB.prepare(
+      "SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id"
+    ).bind(match.id).all<{ wallet: string; team_number: number }>();
+    return {
+      customRoom: {
+        status: match.status,
+        startedAt: match.started_at,
+        endsAt: match.ends_at,
+        mode: match.mode,
+        maxPlayers: match.max_players,
+        members: members.results ?? [],
+      },
+      team: member.team_number,
+    };
+  });
+
 export const createCustomMatch = createServerFn({ method: "POST" })
   .validator(z.object({
     token: z.string().min(24),
