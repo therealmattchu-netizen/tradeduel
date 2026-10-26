@@ -23,9 +23,9 @@ function Matchmaking() {
         eyebrow="MATCHMAKING"
         title="Choose your"
         accent="arena."
-        description="One matchmaking hub for 1v1 duels, 2v2 team duos, and 3v3 or 4v4 team battles. Join public rooms or invite friends to a password-protected private lobby."
+        description="Choose your ruleset, pick your team size, then jump into a public duel or create a password-protected private arena."
       />
-      <section className="td-match-layout" style={{ display: "block" }}>
+      <section className="td-match-layout" style={{ display: "block", "--td-accent":"#a56bff", "--td-border":"#302052", "--td-panel":"#0d0a1c", "--td-text":"#f4efff", "--td-accent-soft":"rgba(151,76,255,.16)", "--td-bg":"#070612", "--td-muted":"#b2a4d0" } as React.CSSProperties}>
         <WalletArena authOnly />
         <CustomMatchBrowser />
       </section>
