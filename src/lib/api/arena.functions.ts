@@ -177,6 +177,22 @@ export const getMyMatches = createServerFn({ method: "POST" }).validator(z.objec
   return { matches: result.results ?? [] };
 });
 
+export const surrenderMatch = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() })).handler(async ({ data }) => {
+  const { DB, wallet } = await requireSession(data.token);
+  const match = await DB.prepare("SELECT id, player_one, player_two, status, ends_at FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)")
+    .bind(data.matchId, wallet, wallet).first<{ id: string; player_one: string; player_two: string | null; status: string; ends_at: string | null }>();
+  if (!match) throw new Error("Match not found for this wallet.");
+  if (match.status !== "active") throw new Error("This match is no longer active.");
+  if (match.ends_at && match.ends_at <= new Date().toISOString()) {
+    await DB.prepare("UPDATE td_matches SET status = 'completed', finished_at = datetime('now') WHERE id = ? AND status = 'active'").bind(data.matchId).run();
+    return { status: "completed" as const, message: "The match timer has already ended." };
+  }
+  const result = await DB.prepare("UPDATE td_matches SET status = 'completed', finished_at = datetime('now') WHERE id = ? AND status = 'active' AND (player_one = ? OR player_two = ?)")
+    .bind(data.matchId, wallet, wallet).run();
+  if ((result.meta?.changes ?? 0) !== 1) throw new Error("The match has already ended.");
+  return { status: "completed" as const, message: "You surrendered. The match has ended. Practice matches do not award a win or affect ELO." };
+});
+
 export const getQueueStatus = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24) })).handler(async ({ data }) => {
   const { DB, wallet } = await requireSession(data.token);
   const row = await DB.prepare("SELECT status, match_id FROM td_queue WHERE wallet = ?").bind(wallet).first<{ status: string; match_id: string | null }>();
