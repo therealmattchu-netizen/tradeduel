@@ -1104,7 +1104,7 @@ export const listCustomMatches = createServerFn({ method: "GET" }).handler(async
       COUNT(mm.id) AS players_count
     FROM td_custom_matches m
     LEFT JOIN td_custom_match_members mm ON mm.match_id = m.id
-    WHERE m.status IN ('open','active') AND m.visibility = 'public'
+    WHERE m.status = 'open' AND m.visibility = 'public'
     GROUP BY m.id
     ORDER BY CASE WHEN m.status='open' THEN 0 ELSE 1 END, m.created_at DESC
     LIMIT 100
@@ -1130,14 +1130,36 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
     const members = await DB.prepare(
       "SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id"
     ).bind(match.id).all<{ wallet: string; team_number: number }>();
+    let currentStatus = match.status;
+    let startedAt = match.started_at;
+    let endsAt = match.ends_at;
+    const currentMembers = members.results ?? [];
+
+    // Self-heal a full room whose final join request was interrupted before
+    // persisting the active state. This check is independent of Solana RPC.
+    if (currentStatus === "open" && currentMembers.length >= match.max_players) {
+      const now = new Date();
+      const candidateStartedAt = now.toISOString();
+      const candidateEndsAt = new Date(now.getTime() + 900 * 1000).toISOString();
+      await DB.prepare(
+        "UPDATE td_custom_matches SET status='active',started_at=COALESCE(started_at,?),ends_at=COALESCE(ends_at,?) WHERE id=? AND status='open'"
+      ).bind(candidateStartedAt, candidateEndsAt, match.id).run();
+      const refreshed = await DB.prepare(
+        "SELECT status,started_at,ends_at FROM td_custom_matches WHERE id=?"
+      ).bind(match.id).first<{status:string;started_at:string|null;ends_at:string|null}>();
+      currentStatus = refreshed?.status ?? currentStatus;
+      startedAt = refreshed?.started_at ?? startedAt;
+      endsAt = refreshed?.ends_at ?? endsAt;
+    }
+
     return {
       customRoom: {
-        status: match.status,
-        startedAt: match.started_at,
-        endsAt: match.ends_at,
+        status: currentStatus,
+        startedAt,
+        endsAt,
         mode: match.mode,
         maxPlayers: match.max_players,
-        members: members.results ?? [],
+        members: currentMembers,
       },
       team: member.team_number,
     };
