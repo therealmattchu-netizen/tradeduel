@@ -381,7 +381,11 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   const nowSec = Math.floor(Date.now() / 1000);
   // Capture start evidence during a wider two-minute startup window to tolerate room-load/RPC latency.
   // The actual observed_at timestamp is retained and settlement still enforces its boundary tolerance.
-  const phase = match.started_at && Math.abs(nowSec - start) <= 120 ? "start" : nowSec >= end ? "end" : null;
+  const existingStart = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = 'start'").bind(match.id,trackedWallet).first<{id:number}>();
+  const existingEnd = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = 'end'").bind(match.id,trackedWallet).first<{id:number}>();
+  // Capture a baseline on the first available sync if the start window was missed.
+  // Its real timestamp is retained; reconciliation will block official scoring when it is outside the start boundary.
+  const phase = !existingStart && match.started_at ? "start" : nowSec >= end && !existingEnd ? "end" : null;
   if (phase) {
     const existingSnapshot = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = ?").bind(match.id,trackedWallet,phase).first<{id:number}>();
     if (!existingSnapshot) {
@@ -415,7 +419,8 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       }
       const unpricedMints = tokenValues.filter((entry)=>entry.valueUsd===null).length;
       const complete = solPrice !== undefined && unpricedMints===0 && tokenBalances.length <= 29;
-      const portfolioUsd = complete ? balance.value/1e9*solPrice! + tokenValues.reduce((sum,entry)=>sum+(entry.valueUsd??0),0) : null;
+      // Partial estimate for the live UI; complete remains false whenever any held asset is unpriced.
+      const portfolioUsd = solPrice !== undefined ? balance.value/1e9*solPrice + tokenValues.reduce((sum,entry)=>sum+(entry.valueUsd??0),0) : null;
       await DB.prepare("INSERT OR IGNORE INTO td_match_valuations (match_id,wallet,phase,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(match.id,trackedWallet,phase,nowSec,balance.value/1e9,portfolioUsd,JSON.stringify(tokenValues),tokenValues.length-unpricedMints,unpricedMints,complete?1:0,complete?"Portfolio priced by DexScreener liquidity-selected token pairs; external transfers and all eligibility rules still require independent reconciliation.":"Incomplete portfolio valuation: one or more token balances or SOL could not be priced reliably.").run();
     }
   }
@@ -461,7 +466,8 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     const solPrice = prices.get("So11111111111111111111111111111111111111112");
     const unpricedMints = tokenValues.filter((entry) => entry.valueUsd === null).length;
     const complete = solPrice !== undefined && unpricedMints === 0 && tokenBalances.length <= 29;
-    const portfolioUsd = complete ? balance.value / 1e9 * solPrice! + tokenValues.reduce((sum, entry) => sum + (entry.valueUsd ?? 0), 0) : null;
+    // Preserve a useful partial estimate when some memecoins lack a qualifying quote. This is display-only and remains marked incomplete.
+    const portfolioUsd = solPrice !== undefined ? balance.value / 1e9 * solPrice + tokenValues.reduce((sum, entry) => sum + (entry.valueUsd ?? 0), 0) : null;
     const note = complete
       ? "Observation-time estimate using current DexScreener spot quotes passing a $1,000 liquidity floor. Not historical pricing, official P&L, or settlement evidence; transfers and token eligibility remain unresolved."
       : "Incomplete observation-time estimate: one or more assets lacked a qualifying current spot quote or token coverage exceeded the cap. Not historical pricing or settlement evidence.";
