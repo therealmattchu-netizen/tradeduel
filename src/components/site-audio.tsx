@@ -208,8 +208,26 @@ export function SiteAudio() {
     };
   }, [scene, ensureAudio]);
 
+  const playResult = useCallback((result: "win" | "loss" | "tie") => {
+    if (!prefsRef.current.effects) return;
+    if (result === "win") {
+      playTone(523.25, 0.16, 0.13, "sine");
+      window.setTimeout(() => playTone(659.25, 0.16, 0.13, "sine"), 110);
+      window.setTimeout(() => playTone(783.99, 0.28, 0.14, "sine"), 220);
+    } else if (result === "loss") {
+      playTone(392, 0.2, 0.11, "triangle");
+      window.setTimeout(() => playTone(311.13, 0.32, 0.11, "triangle"), 150);
+    } else {
+      playTone(587.33, 0.18, 0.10, "sine");
+      window.setTimeout(() => playTone(587.33, 0.22, 0.10, "sine"), 160);
+    }
+  }, [playTone]);
+
   useEffect(() => {
     const onMatchFound = () => playMatchFound();
+    const onMatchWon = () => playResult("win");
+    const onMatchLost = () => playResult("loss");
+    const onMatchTied = () => playResult("tie");
     const onChatMessage = () => {
       if (!prefsRef.current.effects) return;
       // Quiet, short two-tone notification for incoming opponent chat.
@@ -217,12 +235,18 @@ export function SiteAudio() {
       window.setTimeout(() => playTone(880, 0.09, 0.04, "sine", 760), 75);
     };
     window.addEventListener("tradeduel:match-found", onMatchFound);
+    window.addEventListener("tradeduel:match-won", onMatchWon);
+    window.addEventListener("tradeduel:match-lost", onMatchLost);
+    window.addEventListener("tradeduel:match-tied", onMatchTied);
     window.addEventListener("tradeduel:chat-message", onChatMessage);
     return () => {
       window.removeEventListener("tradeduel:match-found", onMatchFound);
+      window.removeEventListener("tradeduel:match-won", onMatchWon);
+      window.removeEventListener("tradeduel:match-lost", onMatchLost);
+      window.removeEventListener("tradeduel:match-tied", onMatchTied);
       window.removeEventListener("tradeduel:chat-message", onChatMessage);
     };
-  }, [playMatchFound, playTone]);
+  }, [playMatchFound, playTone, playResult]);
 
   // Start/resume audio on the first user gesture, then sound route changes.
   useEffect(() => {
