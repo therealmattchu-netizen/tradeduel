@@ -212,6 +212,15 @@ export const getQueueStatus = createServerFn({ method: "POST" }).validator(z.obj
   const { DB, wallet } = await requireSession(data.token);
   const row = await DB.prepare("SELECT status, match_id FROM td_queue WHERE wallet = ?").bind(wallet).first<{ status: string; match_id: string | null }>();
   if (!row) return { status: "idle" as const, matchId: null };
+  if (row.status === "matched" && row.match_id) {
+    const match = await DB.prepare("SELECT status, ends_at FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(row.match_id, wallet, wallet).first<{ status: string; ends_at: string | null }>();
+    if (!match || match.status !== "active" || (match.ends_at && match.ends_at <= new Date().toISOString())) {
+      await DB.prepare("UPDATE td_matches SET status = 'completed', finished_at = COALESCE(finished_at, datetime('now')) WHERE id = ? AND status = 'active'").bind(row.match_id).run();
+      await DB.prepare("DELETE FROM td_queue WHERE wallet = ? AND status = 'matched' AND match_id = ?").bind(wallet, row.match_id).run();
+      return { status: "idle" as const, matchId: null };
+    }
+    return { status: "matched" as const, matchId: row.match_id };
+  }
   return { status: row.status === "matched" ? "matched" as const : "waiting" as const, matchId: row.match_id };
 });
 
