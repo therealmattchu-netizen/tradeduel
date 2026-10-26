@@ -1112,6 +1112,37 @@ export const listCustomMatches = createServerFn({ method: "GET" }).handler(async
   return { matches: rows.results ?? [] };
 });
 
+export const getCustomMatchStatus = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const match = await DB.prepare(
+      "SELECT id,status,started_at,ends_at,mode,max_players FROM td_custom_matches WHERE id=?"
+    ).bind(data.matchId).first<{
+      id: string; status: string; started_at: string | null; ends_at: string | null;
+      mode: string; max_players: number;
+    }>();
+    if (!match) throw new Error("This match does not exist.");
+    const member = await DB.prepare(
+      "SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?"
+    ).bind(match.id, wallet).first<{ team_number: number }>();
+    if (!member) throw new Error("Join this match before viewing its status.");
+    const members = await DB.prepare(
+      "SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id"
+    ).bind(match.id).all<{ wallet: string; team_number: number }>();
+    return {
+      customRoom: {
+        status: match.status,
+        startedAt: match.started_at,
+        endsAt: match.ends_at,
+        mode: match.mode,
+        maxPlayers: match.max_players,
+        members: members.results ?? [],
+      },
+      team: member.team_number,
+    };
+  });
+
 export const createCustomMatch = createServerFn({ method: "POST" })
   .validator(z.object({
     token: z.string().min(24),
@@ -1161,8 +1192,23 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     const team = (counts?.team_one ?? 0) < teamSize ? 1 : 2;
     await DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(match.id,wallet,team).run();
     const after = await DB.prepare("SELECT COUNT(*) AS total FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number}>();
-    if ((after?.total ?? 0) >= match.max_players) { const now = new Date(); const startedAt = now.toISOString(); const endsAt = new Date(now.getTime()+match.duration_seconds*1000).toISOString(); await DB.prepare("UPDATE td_custom_matches SET status='active',started_at=?,ends_at=? WHERE id=? AND status='open'").bind(startedAt,endsAt,match.id).run(); }
-    return { matchId:match.id, team, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:team===1?"Joined Team 1.":"Joined Team 2." };
+    if ((after?.total ?? 0) >= match.max_players) {
+      const now = new Date();
+      const startedAt = now.toISOString();
+      const endsAt = new Date(now.getTime() + match.duration_seconds * 1000).toISOString();
+      await DB.prepare("UPDATE td_custom_matches SET status='active',started_at=?,ends_at=? WHERE id=? AND status='open'")
+        .bind(startedAt, endsAt, match.id).run();
+    }
+    const current = await DB.prepare("SELECT status FROM td_custom_matches WHERE id=?")
+      .bind(match.id).first<{ status: string }>();
+    return {
+      matchId: match.id, team, mode: match.mode, visibility: match.visibility,
+      maxPlayers: match.max_players, durationSeconds: match.duration_seconds,
+      status: current?.status ?? match.status,
+      message: (current?.status ?? match.status) === "active"
+        ? "Lobby is full. The match has started."
+        : team === 1 ? "Joined Team 1. Waiting for more players." : "Joined Team 2. Waiting for more players.",
+    };
   });
 
 export const getCustomMatchChat = createServerFn({ method: "GET" })
