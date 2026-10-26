@@ -448,7 +448,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
     if (!custom || !member) throw new Error("Match not found for this wallet.");
     const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string;team_number:number}>();
-    if (!custom.started_at || custom.status === "open") return {matchId:custom.id,indexed:0,events:[],accountingLedger:[],valuations:[],valuationObservations:[],fillCandidates:[],priceEvidence:[],status:"waiting_for_players",customRoom:{status:custom.status,startedAt:custom.started_at,endsAt:custom.ends_at,mode:custom.mode,maxPlayers:custom.max_players,members:members.results??[]},note:"Room is waiting for all player slots to fill. The match timer and transaction indexing begin together."};
+    if (!custom.started_at || custom.status === "open") return {matchId:custom.id,indexed:0,events:[],accountingLedger:[],valuations:[],valuationObservations:[],fillCandidates:[],priceEvidence:[],status:"waiting_for_players",customRoom:{status:custom.status,startedAt:custom.started_at,endsAt:custom.ends_at,durationSeconds:custom.duration_seconds,mode:custom.mode,maxPlayers:custom.max_players,members:members.results??[]},note:"Room is waiting for all player slots to fill. The match timer and transaction indexing begin together."};
     participants = [...new Set((members.results??[]).map(row=>row.wallet))];
     match = {id:custom.id,player_one:participants[0]??wallet,player_two:participants[1]??null,status:custom.status,started_at:custom.started_at,ends_at:custom.ends_at,verification_status:"unverified",custom:true,mode:custom.mode,max_players:custom.max_players};
   }
@@ -1159,6 +1159,7 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
         status: currentStatus,
         startedAt,
         endsAt,
+        durationSeconds: match.duration_seconds,
         mode: match.mode,
         maxPlayers: match.max_players,
         members: currentMembers,
