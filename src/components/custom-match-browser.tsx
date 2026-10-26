@@ -9,6 +9,9 @@ const modeName = (mode:string) => mode === "head_to_head" ? "1v1 Duel" : mode ==
 export function CustomMatchBrowser() {
   const [matches,setMatches] = useState<CustomMatch[]>([]);
   const [mode,setMode] = useState<"head_to_head"|"duo"|"group">("duo");
+  const [activePanel,setActivePanel] = useState<"modes"|"private"|"browse">("modes");
+  const [privateRoomId,setPrivateRoomId] = useState("");
+  const [privateJoinPassword,setPrivateJoinPassword] = useState("");
   const [visibility,setVisibility] = useState<"public"|"private">("public");
   const [maxPlayers,setMaxPlayers] = useState(6);
   const [duration,setDuration] = useState(900);
@@ -91,7 +94,20 @@ export function CustomMatchBrowser() {
   const fieldStyle:React.CSSProperties={width:"100%",background:"var(--td-bg)",color:"var(--td-text)",border:"1px solid var(--td-border)",borderRadius:6,padding:10};
   return <section style={{marginTop:24,display:"grid",gap:16}}>
     <div style={cardStyle}>
-      <p className="td-overline">CUSTOM MATCHMAKING</p><h2 style={{marginTop:4}}>Create a match with friends</h2>
+      <p className="td-overline">MATCHMAKING MODES</p><h2 style={{marginTop:4}}>Choose how you want to play</h2><p>Select a game type, create a password-protected private lobby, or browse public rooms.</p>
+      <div style={{display:"flex",gap:10,flexWrap:"wrap"}}><button type="button" style={{...buttonStyle,opacity:activePanel==="modes"?1:.65}} onClick={()=>{setActivePanel("modes");setVisibility("public")}}>Game modes</button><button type="button" style={{...buttonStyle,opacity:activePanel==="private"?1:.65}} onClick={()=>{setActivePanel("private");setVisibility("private")}}>Create private lobby</button><button type="button" style={{...buttonStyle,opacity:activePanel==="browse"?1:.65}} onClick={()=>setActivePanel("browse")}>Browse public lobbies</button></div>
+    </div>
+    {activePanel==="modes"&&<div style={cardStyle}>
+      <p className="td-overline">GAME TYPE</p><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10}}>{([{id:"head_to_head",title:"1v1 Duel",desc:"One player against one player"},{id:"duo",title:"Team Duos 2v2",desc:"Pair up and compete as a team"},{id:"group",title:"Team Battle",desc:"3v3 or 4v4 lobby"}] as const).map(item=><button type="button" key={item.id} style={{...buttonStyle,textAlign:"left",padding:14,borderColor:mode===item.id?"var(--td-accent)":"var(--td-border)"}} onClick={()=>{setMode(item.id);if(item.id==="head_to_head")setMaxPlayers(2);else if(item.id==="duo")setMaxPlayers(4);else if(maxPlayers<6)setMaxPlayers(6)}}><strong style={{display:"block"}}>{item.title}</strong><small>{item.desc}</small></button>)}</div>
+    </div>}
+    {activePanel==="private"&&<div style={cardStyle}>
+      <p className="td-overline">PRIVATE LOBBY</p><h2>Create a password-protected room</h2><p>Choose the format, create a room, then share its room ID and password with invited players. Passwords are stored as hashes.</p>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:12}}><label>GAME TYPE<select style={fieldStyle} value={mode} onChange={e=>{const next=e.target.value as typeof mode;setMode(next);if(next==="head_to_head")setMaxPlayers(2);else if(next==="duo")setMaxPlayers(4);else if(maxPlayers<6)setMaxPlayers(6)}}><option value="head_to_head">1v1 Duel</option><option value="duo">Team Duos 2v2</option><option value="group">Team Battle</option></select></label>{mode==="group"&&<label>PLAYER LIMIT<select style={fieldStyle} value={maxPlayers} onChange={e=>setMaxPlayers(Number(e.target.value))}><option value={6}>6 players · 3v3</option><option value={8}>8 players · 4v4</option></select></label>}<label>DURATION<select style={fieldStyle} value={duration} onChange={e=>setDuration(Number(e.target.value))}><option value={900}>15 minutes</option><option value={1800}>30 minutes</option><option value={3600}>1 hour</option><option value={7200}>2 hours</option><option value={86400}>1 day</option></select></label><label>LOBBY PASSWORD<input style={fieldStyle} type="password" minLength={4} maxLength={80} value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 4 characters"/></label></div>
+      <button type="button" style={{...buttonStyle,marginTop:14}} disabled={busy||password.trim().length<4} onClick={()=>{setVisibility("private");void create()}}>{busy?"Creating…":"Create private lobby"}</button>
+      <div style={{marginTop:18,paddingTop:16,borderTop:"1px solid var(--td-border)"}}><h3>Join a private lobby</h3><p>Enter the room ID shared by the host and the matching password.</p><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10}}><label>ROOM ID<input style={fieldStyle} value={privateRoomId} onChange={e=>setPrivateRoomId(e.target.value.trim())} placeholder="Paste private room ID"/></label><label>ROOM PASSWORD<input style={fieldStyle} type="password" value={privateJoinPassword} onChange={e=>setPrivateJoinPassword(e.target.value)} placeholder="Lobby password"/></label></div><button type="button" style={{...buttonStyle,marginTop:12}} disabled={busy||!privateRoomId.trim()||!privateJoinPassword} onClick={async()=>{const token=window.sessionStorage.getItem("td_session_token")||"";if(!token){setNotice("Connect and verify your wallet before joining a private lobby.");return;}setBusy(true);setNotice("");try{const result=await joinCustomMatch({data:{token,matchId:privateRoomId.trim(),password:privateJoinPassword}});const listed=await listCustomMatches();const found=(listed.matches as CustomMatch[]).find(m=>m.id===privateRoomId.trim());const fallback:CustomMatch={id:privateRoomId.trim(),creator_wallet:"",mode:"duo",visibility:"private",max_players:4,duration_seconds:duration,status:"open",created_at:new Date().toISOString(),players_count:1};setSelected(found??fallback);setTeam(result.team);setChannel("all");setMessages([]);setLatestId(0);setNotice(result.message);setPrivateJoinPassword("");await refresh();}catch(error){setNotice(error instanceof Error?error.message:"Could not join this private lobby.");}finally{setBusy(false);}}}>Join private lobby</button></div>
+    </div>}
+    {activePanel==="browse"&&<div style={cardStyle}>
+      <p className="td-overline">PUBLIC LOBBIES</p><h2>Find an open match</h2><h2 style={{marginTop:4}}>Create a match with friends</h2>
       <p>Choose a head-to-head duel, 2v2 duos, or a larger team battle. Public rooms appear in the browser; private rooms require a password to join.</p>
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(165px,1fr))",gap:12}}>
         <label>MODE<select style={fieldStyle} value={mode} onChange={e=>{const next=e.target.value as typeof mode;setMode(next);if(next==="head_to_head")setMaxPlayers(2);else if(next==="duo")setMaxPlayers(4);else if(maxPlayers<6)setMaxPlayers(6)}}><option value="head_to_head">1v1 Duel</option><option value="duo">Duo 2v2</option><option value="group">Group Team Battle</option></select></label>
@@ -102,8 +118,7 @@ export function CustomMatchBrowser() {
       </div>
       <button style={{...buttonStyle,marginTop:14}} disabled={busy||(visibility==="private"&&password.trim().length<4)} onClick={()=>void create()}>{busy?"Working…":"Create match room"}</button>
     </div>
-    <div style={cardStyle}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><p className="td-overline">MATCH SEARCH</p><h2>Public & private matches</h2></div><button style={buttonStyle} onClick={()=>void refresh()}>Refresh</button></div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><p className="td-overline">MATCH SEARCH</p><h2>Public matches</h2></div><button style={buttonStyle} onClick={()=>void refresh()}>Refresh</button></div>
       <p>See the format, visibility, capacity, and current player count before joining.</p>
       <div style={{display:"grid",gap:10}}>
         {matches.length===0?<p>No open rooms yet. Create one above to invite friends.</p>:matches.map(match=><div key={match.id} style={{border:"1px solid var(--td-border)",borderRadius:8,padding:12,display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:12,alignItems:"center"}}>
@@ -111,7 +126,7 @@ export function CustomMatchBrowser() {
           <button style={buttonStyle} disabled={busy||match.players_count>=match.max_players||match.status!=="open"} onClick={()=>void join(match)}>{match.players_count>=match.max_players?"Full":match.status==="active"?"In progress":"Join"}</button>
         </div>)}
       </div>
-    </div>
+    </div>}
     {selected&&<div style={cardStyle}>
       <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center"}}><div><p className="td-overline">ROOM {selected.id.slice(0,8).toUpperCase()}</p><h2>{modeName(selected.mode)} · Team {team??"—"}</h2></div><button style={buttonStyle} onClick={()=>setSelected(null)}>Close chat</button></div>
       <div style={{display:"flex",gap:8,margin:"12px 0"}}><button style={{...buttonStyle,opacity:channel==="all"?1:.65}} onClick={()=>{setChannel("all");setMessages([]);setLatestId(0)}}>All chat</button><button style={{...buttonStyle,opacity:channel==="team"?1:.65}} onClick={()=>{setChannel("team");setMessages([]);setLatestId(0)}}>Team chat</button></div>
