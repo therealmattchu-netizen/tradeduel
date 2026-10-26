@@ -427,7 +427,9 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       historyIndexExhausted:Boolean((await DB.prepare("SELECT exhausted FROM td_wallet_index_state WHERE wallet=?").bind(wallet).first<{exhausted:number}>())?.exhausted),
       costBasisMethod:"Candidate buy/sell events are indexed progressively. Current remaining basis uses average-cost approximation; realized proceeds are shown when quote-asset proceeds are identified. SOL conversions use spot price at first detection, not historical fill prices.",
       tradeActivity:tradeActivity.sort((a,b)=>(b.blockTime??0)-(a.blockTime??0)).slice(0,30),
-      source: "Solana mainnet RPC + DexScreener spot quotes",\n      updatedAt: new Date().toISOString(),\n      refreshIntervalSeconds: 20,
+      source: "Solana mainnet RPC + DexScreener spot quotes",
+      updatedAt: new Date().toISOString(),
+      refreshIntervalSeconds: 20,
       disclaimer: "Historical signature indexing advances by up to 100 transactions every five minutes and may take repeated refreshes for large wallets. Current balances, recent transactions, and market quotes refresh automatically while this page is open. Swap identification is heuristic. USDC is treated as approximately $1; SOL quote amounts use the SOL/USD spot quote at first detection, not historical fill prices. Transfers, LP actions, other quote assets, incomplete RPC history and token-account lifecycle changes can cause errors. Realized proceeds are estimates; average-cost P&L is not audited FIFO accounting.",
     };
   });
