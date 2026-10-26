@@ -235,8 +235,8 @@ export function WalletArena() {
             // namespaces that can be claimed by another installed extension.
             const standardPhantom = discoverStandardWallets().find(
               (wallet) => wallet.name.trim().toLowerCase() === "phantom" &&
-                Boolean(wallet.features["standard:connect"]?.connect) &&
-                Boolean(wallet.features["solana:signMessage"]?.signMessage),
+                typeof wallet.features["standard:connect"]?.connect === "function" &&
+                typeof wallet.features["solana:signMessage"]?.signMessage === "function",
             );
             if (standardPhantom) {
               void connectWallet({ name: "Phantom", standardWallet: standardPhantom });
