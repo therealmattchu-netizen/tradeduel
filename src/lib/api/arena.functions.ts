@@ -353,6 +353,9 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
         }
       }catch{/* Spot prices are optional; balances and chain activity remain available. */}
     }
+    let solPriceUsd:number|null=null;
+    try{const sr=await fetch("https://api.dexscreener.com/tokens/v1/solana/So11111111111111111111111111111111111111112",{headers:{accept:"application/json"},signal:AbortSignal.timeout(4000)});if(sr.ok){const sp=await sr.json() as Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number}}>;const best=(sp??[]).filter(p=>p.baseToken?.address==="So11111111111111111111111111111111111111112"&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];if(best)solPriceUsd=Number(best.priceUsd);}}catch{}
+    for(const buy of buyCandidates){try{await DB.prepare("INSERT OR IGNORE INTO td_wallet_token_buys (wallet,mint,signature,block_time,token_amount,sol_spent,estimated_cost_usd,sol_price_usd,source) VALUES (?,?,?,?,?,?,?,?,?)").bind(wallet,buy.mint,buy.signature,buy.blockTime,buy.amount,buy.solSpent,solPriceUsd===null?null:buy.solSpent*solPriceUsd,solPriceUsd,"swap_program_plus_sol_outflow_candidate").run();}catch{}}
     const positions=[...holdings.values()].map(h=>({mint:h.mint,amount:h.amount,priceUsd:prices.get(h.mint)?.priceUsd??null,valueUsd:prices.has(h.mint)?h.amount*prices.get(h.mint)!.priceUsd!:null,liquidityUsd:prices.get(h.mint)?.liquidityUsd??null,pairUrl:prices.get(h.mint)?.pairUrl??null,programs:[...h.programs]})).sort((a,b)=>(b.valueUsd??-1)-(a.valueUsd??-1));
     const pricedValue=positions.reduce((sum,p)=>sum+(p.valueUsd??0),0);
     const unpricedPositions=positions.filter(p=>p.valueUsd===null).length;
