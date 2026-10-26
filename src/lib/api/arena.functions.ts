@@ -1040,8 +1040,8 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
   .validator(z.object({ token:z.string().min(24), matchId:z.string().uuid(), password:z.string().max(80).optional() }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    const match = await DB.prepare("SELECT id,creator_wallet,mode,visibility,max_players,password_hash,status FROM td_custom_matches WHERE id=?").bind(data.matchId)
-      .first<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;password_hash:string|null;status:string}>();
+    const match = await DB.prepare("SELECT id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status FROM td_custom_matches WHERE id=?").bind(data.matchId)
+      .first<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;duration_seconds:number;password_hash:string|null;status:string}>();
     if (!match || match.status !== "open") throw new Error("This match is not open for new players.");
     const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
     if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"You're already in this match." };
