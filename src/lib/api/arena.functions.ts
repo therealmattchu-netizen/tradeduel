@@ -535,7 +535,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       hasLifecycleEffects,
     });
     await DB.prepare("INSERT OR IGNORE INTO td_match_accounting_ledger (match_id,wallet,signature,slot,block_time,success,fee_lamports,native_delta_lamports,native_delta_ex_fee_lamports,token_deltas_json,external_flows_json,protocols_json,evidence_level,blockers_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.tx_error_json===null?1:0,ledger.feeLamports,ledger.nativeDeltaLamports,ledger.nativeDeltaExFeeLamports,JSON.stringify(ledger.tokenDeltas),JSON.stringify(ledger.externalFlows),JSON.stringify(ledger.protocols),ledger.evidenceLevel,JSON.stringify([...new Set([...ledger.blockers,"external_transfer_analysis_not_yet_complete"])]))
+      .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.block_time,sig.tx_error_json===null?1:0,ledger.feeLamports,ledger.nativeDeltaLamports,ledger.nativeDeltaExFeeLamports,JSON.stringify(ledger.tokenDeltas),JSON.stringify(ledger.externalFlows),JSON.stringify(ledger.protocols),ledger.evidenceLevel,JSON.stringify([...new Set([...ledger.blockers,"external_transfer_analysis_not_yet_complete"])]))
       .run();
     const signatureFailed = sig.tx_error_json !== null;
     const eventType = signatureFailed ? "failed" : isBuy ? "pump_fun_buy_candidate" : isSell ? "pump_fun_sell_candidate" : pumpRelated ? "pump_fun_instruction_unclassified" : tokenDeltas.length ? "token_activity" : "sol_activity";
