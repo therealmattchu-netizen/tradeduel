@@ -1,30 +1,21 @@
-/* Cascade layer order: reset lowest, then Tailwind/Quanta base, then
- * components and finally utilities — so Quanta's q-* utilities (e.g.
- * q-button-*) always win over global element resets. */
+/* Independent TradeDuel styles: no platform design-system stylesheet. */
 @layer reset, theme, base, components, utilities;
 
 @import "tailwindcss" source(none);
 @source "../src";
-@source "../packages/app-landing/src";
-@source "../packages/quanta/src";
-@import "@higgsfield/quanta/tailwind.css";
 
 /* New in-app Quanta-style components (moved out of the quanta package). Their
  * CSS uses Tailwind v4 @utility/@source, so it must load through this tailwind
  * entry. Ordering mirrors quanta's components.css (composer after button;
  * media-card + generation-card after media). */
-@import "./components/composer/composer.css";
-@import "./components/media-card/media-card.css";
-@import "./components/generation-card/generation-card.css";
-@import "./components/setting-trigger/setting-trigger.css";
-@import "./components/prompt-box/prompt-box.css";
-@import "./components/icon-tile/icon-tile.css";
 
 @import "tw-animate-css";
 /* shadcn v4 base (scrollbar/scroll-fade utilities, toast base) for src/components/ui */
 @import "shadcn/tailwind.css";
 
 @custom-variant dark (&:where([data-theme="default-dark"], [data-theme="default-dark"] *));
+
+:root { --td-bg: #080a0d; --td-text: #f5f7fa; --td-muted: #a4abb6; --td-border: #353b45; --td-accent: #c7f36b; --td-surface: #11151b; --td-surface-raised: #171c24; }
 
 /*
  * Quanta is the visual source of truth. This file imports Quanta's Tailwind
