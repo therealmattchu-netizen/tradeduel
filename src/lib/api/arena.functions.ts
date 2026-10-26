@@ -201,15 +201,46 @@ export const getPublicMatches = createServerFn({ method: "GET" }).handler(async 
   return { matches: result.results ?? [] };
 });
 
+const SOLANA_MAINNET_RPCS = [
+  "https://api.mainnet-beta.solana.com",
+  "https://solana-rpc.publicnode.com",
+] as const;
+
+/** Fail over between independent public mainnet RPCs when one is throttled or unavailable. */
+async function solanaRpcCall(method: string, params: unknown[]) {
+  const failures: string[] = [];
+  for (const endpoint of SOLANA_MAINNET_RPCS) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!response.ok) {
+        failures.push(`${new URL(endpoint).hostname}: HTTP ${response.status}`);
+        continue;
+      }
+      const json = await response.json() as { result?: unknown; error?: { code?: number; message?: string } };
+      if (json.error) {
+        failures.push(`${new URL(endpoint).hostname}: ${json.error.message || "RPC error"}`);
+        continue;
+      }
+      if (!("result" in json)) {
+        failures.push(`${new URL(endpoint).hostname}: missing result`);
+        continue;
+      }
+      return json.result;
+    } catch (error) {
+      failures.push(`${new URL(endpoint).hostname}: ${error instanceof Error ? error.message : "request failed"}`);
+    }
+  }
+  console.error("Solana mainnet RPC providers failed", { method, failures });
+  throw new Error("Solana mainnet RPC providers are temporarily unavailable. Please retry in a moment.");
+}
+
 export const trackPublicWallet = createServerFn({ method: "POST" }).validator(z.object({ wallet: z.string().regex(WALLET_RE) })).handler(async ({ data }) => {
-  const rpc = "https://api.mainnet-beta.solana.com";
-  const call = async (method: string, params: unknown[]) => {
-    const response = await fetch(rpc, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
-    if (!response.ok) throw new Error("Solana RPC is temporarily unavailable. Try again shortly.");
-    const json = await response.json() as { result?: unknown; error?: { message?: string } };
-    if (json.error) throw new Error(json.error.message || "Solana RPC request failed.");
-    return json.result;
-  };
+  const call = solanaRpcCall;
   const [balanceResult, signatureResult] = await Promise.all([
     call("getBalance", [data.wallet, { commitment: "confirmed" }]) as Promise<{ value: number }>,
     call("getSignaturesForAddress", [data.wallet, { limit: 12 }]) as Promise<Array<{signature:string;blockTime:number|null;err:unknown;confirmationStatus:string|null}>>,
