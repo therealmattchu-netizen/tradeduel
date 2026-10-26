@@ -445,8 +445,8 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     const custom = await DB.prepare("SELECT id,status,started_at,ends_at,mode,max_players FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string;started_at:string|null;ends_at:string|null;mode:string;max_players:number}>();
     const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
     if (!custom || !member) throw new Error("Match not found for this wallet.");
-    if (!custom.started_at || custom.status === "open") throw new Error("This custom match has not started yet. Activity indexing begins when every slot is filled.");
-    const members = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string}>();
+    const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string;team_number:number}>();
+    if (!custom.started_at || custom.status === "open") return {matchId:custom.id,indexed:0,events:[],accountingLedger:[],valuations:[],valuationObservations:[],fillCandidates:[],priceEvidence:[],status:"waiting_for_players",customRoom:{status:custom.status,startedAt:custom.started_at,endsAt:custom.ends_at,mode:custom.mode,maxPlayers:custom.max_players,members:members.results??[]},note:"Room is waiting for all player slots to fill. The match timer and transaction indexing begin together."};
     participants = [...new Set((members.results??[]).map(row=>row.wallet))];
     match = {id:custom.id,player_one:participants[0]??wallet,player_two:participants[1]??null,status:custom.status,started_at:custom.started_at,ends_at:custom.ends_at,verification_status:"unverified",custom:true,mode:custom.mode,max_players:custom.max_players};
   }
