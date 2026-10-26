@@ -35,7 +35,7 @@ async function fetchHistoricalTokenPrice(mint: string, targetAt: number, poolCac
     try {
       const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/tokens/${encodeURIComponent(mint)}/pools?page=1`, { headers: { accept: "application/json" } });
       if (!response.ok) { poolCache.set(mint, null); return noPrice(`pool_lookup_http_${response.status}`); }
-      const body = await response.json() as { data?: Array<{ id?: string; attributes?: { address?: string; reserve_in_usd?: string }; relationships?: { base_token?: { data?: { id?: string } }; quote_token?: { data?: { id?: string } } }> };
+      const body = await response.json() as { data?: Array<{ id?: string; attributes?: { address?: string; reserve_in_usd?: string }; relationships?: { base_token?: { data?: { id?: string } }; quote_token?: { data?: { id?: string } } } }> };
       const candidates = (body.data ?? []).flatMap((item) => {
         const baseId = item.relationships?.base_token?.data?.id;
         const address = item.attributes?.address ?? item.id?.split("_").slice(1).join("_");
