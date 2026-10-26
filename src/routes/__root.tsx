@@ -16,7 +16,7 @@ import appMetaJson from "../app-meta.json";
 
 // Built-in defaults for any field that isn't set in app-meta.json.
 const DEFAULT_TITLE = "TradeDuel | The Trading Arena";
-const DEFAULT_DESCRIPTION = "A competitive Pump.fun trading arena in development. Head-to-head challenges, wallet-owned trades, and transparent scoring.";
+const DEFAULT_DESCRIPTION = "A competitive Solana trading arena for head-to-head challenges, wallet-owned trades, and transparent scoring.";
 
 type AppMeta = {
   og_title?: string | null;
