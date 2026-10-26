@@ -76,10 +76,8 @@ function getWalletChoices(): WalletChoice[] {
   for (const wallet of discoverStandardWallets()) {
     const name = wallet.name.trim();
     if (!name || !wallet.features["standard:connect"] || !wallet.features["solana:signMessage"]) continue;
-    // Never let a Wallet Standard registration stand in for Phantom when its
-    // dedicated namespace is missing. A misregistered/stale entry could route
-    // the Phantom-labeled button to another extension.
-    if (name.toLowerCase() === "phantom" && !window.phantom?.solana) continue;
+    // Keep the Wallet Standard Phantom registration as a valid identity-specific
+    // route when Phantom does not expose its legacy namespace.
     if (choices.some((item) => item.name.toLowerCase() === name.toLowerCase())) continue;
     choices.push({ name, standardWallet: wallet });
   }
@@ -233,16 +231,28 @@ export function WalletArena() {
             // The legacy API is accepted only when it positively identifies
             // itself as Phantom, so Backpack cannot capture this button.
             const phantomProvider =
-              window.phantom?.solana ??
-              (window.solana?.isPhantom && !window.solana.isBackpack ? window.solana : undefined);
-            if (phantomProvider && !phantomProvider.isBackpack) {
+              window.phantom?.solana?.isPhantom === true && !window.phantom.solana.isBackpack
+                ? window.phantom.solana
+                : window.solana?.isPhantom === true && !window.solana.isBackpack
+                  ? window.solana
+                  : undefined;
+            if (phantomProvider) {
               void connectWallet({ name: "Phantom", provider: phantomProvider });
               return;
             }
-            // Open the official Phantom site in the click gesture (not an
-            // asynchronous callback), which avoids popup blockers.
+            // If Phantom exposes only Wallet Standard, use the exact registered
+            // wallet identity rather than a shared injected provider namespace.
+            const standardPhantom = discoverStandardWallets().find(
+              (wallet) => wallet.name.trim().toLowerCase() === "phantom" &&
+                Boolean(wallet.features["standard:connect"]) &&
+                Boolean(wallet.features["solana:signMessage"]),
+            );
+            if (standardPhantom) {
+              void connectWallet({ name: "Phantom", standardWallet: standardPhantom });
+              return;
+            }
             window.open("https://phantom.app/download", "_blank", "noopener,noreferrer");
-            setNotice("Phantom was not detected in this browser. Install or enable the Phantom extension, then reload TradeDuel. The Phantom button will not connect through Backpack.");
+            setNotice("Phantom's own provider was not detected. TradeDuel blocked the ambiguous injected provider rather than opening Backpack. Install or enable Phantom, then reload.");
             return;
           }
           if (!choice.provider && !choice.standardWallet && choice.name === "Backpack") {
