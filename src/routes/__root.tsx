@@ -26,9 +26,6 @@ type AppMeta = {
   og_image_url?: string | null;
   favicon_url?: string | null;
   og_video_url?: string | null;
-  // Read by the Higgsfield platform (marketplace feed card), never by the
-  // app itself — keep it in this file, don't render it.
-  marketplace_cover_url?: string | null;
 };
 
 const appMeta = appMetaJson as AppMeta;
@@ -89,7 +86,7 @@ function buildHead(meta: AppMeta) {
           ]
         : []),
       // Cover video (og:video) — the animated counterpart of og:image; the
-      // Higgsfield feed cards also play it on hover.
+      // social preview cards also play it on hover.
       ...(ogVideo ? [{ property: "og:video", content: ogVideo }] : []),
     ],
     links: [
