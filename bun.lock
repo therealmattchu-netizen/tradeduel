@@ -914,18 +914,6 @@
       {},
       "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="
     ],
-    "@higgsfield/app-landing": [
-      "@higgsfield/app-landing@workspace:packages/app-landing"
-    ],
-    "@higgsfield/fnf": [
-      "@higgsfield/fnf@workspace:packages/fnf"
-    ],
-    "@higgsfield/fnf-react": [
-      "@higgsfield/fnf-react@workspace:packages/fnf-react"
-    ],
-    "@higgsfield/quanta": [
-      "@higgsfield/quanta@workspace:packages/quanta"
-    ],
     "@hono/node-server": [
       "@hono/node-server@1.19.14",
       "",
