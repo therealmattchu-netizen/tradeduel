@@ -1056,7 +1056,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     const team = (counts?.team_one ?? 0) < teamSize ? 1 : 2;
     await DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(match.id,wallet,team).run();
     const after = await DB.prepare("SELECT COUNT(*) AS total FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number}>();
-    if ((after?.total ?? 0) >= match.max_players) await DB.prepare("UPDATE td_custom_matches SET status='active' WHERE id=? AND status='open'").bind(match.id).run();
+    if ((after?.total ?? 0) >= match.max_players) { const now = new Date(); const startedAt = now.toISOString(); const endsAt = new Date(now.getTime()+match.duration_seconds*1000).toISOString(); await DB.prepare("UPDATE td_custom_matches SET status='active',started_at=?,ends_at=? WHERE id=? AND status='open'").bind(startedAt,endsAt,match.id).run(); }
     return { matchId:match.id, team, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:team===1?"Joined Team 1.":"Joined Team 2." };
   });
 
