@@ -77,15 +77,6 @@ function getWalletChoices(): WalletChoice[] {
     if (choices.some((item) => item.name.toLowerCase() === name.toLowerCase())) continue;
     choices.push({ name, standardWallet: wallet });
   }
-  for (const candidate of candidates) {
-    const provider = candidate.provider;
-    if (!provider?.connect || !provider.signMessage) continue;
-    if (seenProviders.includes(provider)) continue;
-    if (choices.some((item) => item.name.toLowerCase() === candidate.name.toLowerCase())) continue;
-    seenProviders.push(provider);
-    choices.push({ name: candidate.name, provider });
-  }
-
   // Keep Backpack visible even when the extension is not detected; its fallback
   // opens the official install page rather than pretending a connection succeeded.
   if (!choices.some((item) => item.name.toLowerCase() === "backpack")) choices.push({ name: "Backpack" });
