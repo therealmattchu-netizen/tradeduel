@@ -24,6 +24,8 @@ type AppEnv = {
   CONTAINER?: DurableObjectNamespace;
   HF_ENV?: string;
   APP_SLUG?: string;
+  // Explicit wallet-signing domain per deployment (preview and production differ).
+  TRADEDUEL_WALLET_DOMAIN?: string;
 };
 
 export function bindings(): AppEnv {
