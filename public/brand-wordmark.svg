@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 112" role="img" aria-labelledby="title">
+<title id="title">TradeDuel</title>
+<defs>
+  <linearGradient id="word" x1="0" y1="0" x2="0.9" y2="1"><stop stop-color="#F0B9FF"/><stop offset=".42" stop-color="#C56BFF"/><stop offset="1" stop-color="#7B2AFF"/></linearGradient>
+  <filter id="glow" x="-15%" y="-35%" width="130%" height="170%"><feGaussianBlur stdDeviation="3" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+</defs>
+<text x="380" y="83" text-anchor="middle" font-family="Orbitron, Eurostile, 'Arial Black', sans-serif" font-size="82" font-weight="900" letter-spacing="-3.5" fill="url(#word)" filter="url(#glow)" textLength="710" lengthAdjust="spacingAndGlyphs">TRADEDUEL</text>
+</svg>
