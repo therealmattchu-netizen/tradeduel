@@ -280,15 +280,88 @@ async function solanaRpcCall(method: string, params: unknown[]) {
   throw new Error("Solana mainnet RPC providers are temporarily unavailable. Please retry in a moment.");
 }
 
-export const trackPublicWallet = createServerFn({ method: "POST" }).validator(z.object({ wallet: z.string().regex(WALLET_RE) })).handler(async ({ data }) => {
-  const call = solanaRpcCall;
-  const [balanceResult, signatureResult] = await Promise.all([
-    call("getBalance", [data.wallet, { commitment: "confirmed" }]) as Promise<{ value: number }>,
-    call("getSignaturesForAddress", [data.wallet, { limit: 12 }]) as Promise<Array<{signature:string;blockTime:number|null;err:unknown;confirmationStatus:string|null}>>,
-  ]);
-  return { wallet: data.wallet, balanceSol: balanceResult.value / 1_000_000_000, signatures: signatureResult.map((s) => ({ signature: s.signature, blockTime: s.blockTime, success: s.err === null, confirmationStatus: s.confirmationStatus })), source: "Solana mainnet RPC", disclaimer: "Public chain data only. This tracker does not identify every token trade or calculate portfolio profit and loss." };
-});
-
+export const trackPublicWallet = createServerFn({ method: "POST" })
+  .validator(z.object({ wallet: z.string().regex(WALLET_RE) }))
+  .handler(async ({ data }) => {
+    const call = solanaRpcCall;
+    const wallet = data.wallet;
+    const tokenPrograms = [
+      { name: "spl-token", id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
+      { name: "token-2022", id: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" },
+    ];
+    const [balanceResult, signatureResult, ...tokenAccountResults] = await Promise.all([
+      call("getBalance", [wallet, { commitment: "confirmed" }]) as Promise<{ value: number }>,
+      call("getSignaturesForAddress", [wallet, { limit: 20, commitment: "confirmed" }]) as Promise<Array<{signature:string;blockTime:number|null;err:unknown;confirmationStatus:string|null}>>,
+      ...tokenPrograms.map(program => call("getTokenAccountsByOwner", [wallet, { programId: program.id }, { encoding: "jsonParsed", commitment: "confirmed" }]).catch(() => ({ value: [] })) as Promise<ParsedTokenAccounts>),
+    ]);
+    const holdings = new Map<string, {mint:string;amount:number;programs:Set<string>}>();
+    for (let i=0;i<tokenAccountResults.length;i++) {
+      const result = tokenAccountResults[i] as ParsedTokenAccounts;
+      for (const item of result.value ?? []) {
+        const info = item.account?.data?.parsed?.info;
+        const mint = info?.mint;
+        const amount = Number(info?.tokenAmount?.uiAmount ?? 0);
+        if (!mint || !Number.isFinite(amount) || amount <= 0) continue;
+        const current = holdings.get(mint) ?? { mint, amount: 0, programs: new Set<string>() };
+        current.amount += amount;
+        current.programs.add(tokenPrograms[i].name);
+        holdings.set(mint, current);
+      }
+    }
+    const signatures = signatureResult;
+    const tradeActivity: Array<{signature:string;blockTime:number|null;mint:string;amount:number;direction:"inflow_candidate"|"outflow_candidate";programIds:string[]}> = [];
+    // Inspect a bounded recent window for wallet token balance changes. These are
+    // activity candidates; transfers, airdrops, LP actions, and swaps can look alike.
+    const txResults = await Promise.all(signatures.slice(0,12).map(async sig => {
+      if (sig.err !== null) return null;
+      try {
+        return { sig, tx: await call("getTransaction", [sig.signature, { encoding:"jsonParsed", commitment:"confirmed", maxSupportedTransactionVersion:0 }]) as any };
+      } catch { return null; }
+    }));
+    for (const item of txResults) {
+      if (!item?.tx?.meta) continue;
+      const tx=item.tx;
+      const keys=(tx.transaction?.message?.accountKeys??[]).map((k:any)=>typeof k==="string"?k:k.pubkey);
+      const walletIndex=keys.indexOf(wallet);
+      if(walletIndex<0) continue;
+      const deltas=new Map<string,number>();
+      for(const b of tx.meta.preTokenBalances??[]) if(b.owner===wallet&&b.mint) deltas.set(b.mint,-Number(b.uiTokenAmount?.uiAmount??0));
+      for(const b of tx.meta.postTokenBalances??[]) if(b.owner===wallet&&b.mint) deltas.set(b.mint,(deltas.get(b.mint)??0)+Number(b.uiTokenAmount?.uiAmount??0));
+      const programIds=[...new Set((tx.transaction?.message?.instructions??[]).map((ix:any)=>String(ix.programId??"")).filter(Boolean))];
+      for(const inner of tx.meta.innerInstructions??[]) for(const ix of inner.instructions??[]) if(ix.programId) programIds.push(String(ix.programId));
+      for(const [mint,amount] of deltas) if(Number.isFinite(amount)&&Math.abs(amount)>1e-10) tradeActivity.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,direction:amount>0?"inflow_candidate":"outflow_candidate",programIds:[...new Set(programIds)]});
+    }
+    const mints=[...holdings.keys()].slice(0,30);
+    const prices=new Map<string,{priceUsd:number|null;liquidityUsd:number|null;pairUrl:string|null}>();
+    if(mints.length){
+      try{
+        const response=await fetch("https://api.dexscreener.com/tokens/v1/solana/"+mints.join(","),{headers:{accept:"application/json"},signal:AbortSignal.timeout(7000)});
+        if(response.ok){
+          const pairs=await response.json() as Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number};url?:string}>;
+          for(const pair of pairs??[]){
+            const mint=pair.baseToken?.address;const price=Number(pair.priceUsd);const liquidity=Number(pair.liquidity?.usd??0);
+            if(!mint||!Number.isFinite(price)||price<=0)continue;
+            const old=prices.get(mint);
+            if(!old||(liquidity>(old.liquidityUsd??0)))prices.set(mint,{priceUsd:price,liquidityUsd:liquidity,pairUrl:pair.url??null});
+          }
+        }
+      }catch{/* Spot prices are optional; balances and chain activity remain available. */}
+    }
+    const positions=[...holdings.values()].map(h=>({mint:h.mint,amount:h.amount,priceUsd:prices.get(h.mint)?.priceUsd??null,valueUsd:prices.has(h.mint)?h.amount*prices.get(h.mint)!.priceUsd!:null,liquidityUsd:prices.get(h.mint)?.liquidityUsd??null,pairUrl:prices.get(h.mint)?.pairUrl??null,programs:[...h.programs]})).sort((a,b)=>(b.valueUsd??-1)-(a.valueUsd??-1));
+    const pricedValue=positions.reduce((sum,p)=>sum+(p.valueUsd??0),0);
+    const unpricedPositions=positions.filter(p=>p.valueUsd===null).length;
+    return {
+      wallet,
+      balanceSol: balanceResult.value / 1_000_000_000,
+      signatures: signatures.map((sig) => ({ signature: sig.signature, blockTime: sig.blockTime, success: sig.err === null, confirmationStatus: sig.confirmationStatus })),
+      positions,
+      estimatedTokenValueUsd: unpricedPositions===0?pricedValue:null,
+      unpricedPositions,
+      tradeActivity:tradeActivity.sort((a,b)=>(b.blockTime??0)-(a.blockTime??0)).slice(0,30),
+      source: "Solana mainnet RPC + DexScreener spot quotes",
+      disclaimer: "Token inflow/outflow labels are candidates, not verified buys or sells. Transfers, airdrops, LP actions, and swaps can produce similar balance changes. USD values use current spot quotes and are not cost basis or profit/loss.",
+    };
+  });
 
 /** Indexes a bounded number of public Solana transactions for a participant's active match.
  * This is an activity-ingestion engine, not a token price or P&L oracle. */
