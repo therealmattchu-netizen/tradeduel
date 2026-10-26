@@ -60,7 +60,7 @@ function getWalletChoices(): WalletChoice[] {
     { name: "Other Solana wallet", provider: window.solana },
   ];
   for (const candidate of candidates) {
-    if (candidate.provider?.connect && candidate.provider?.signMessage && !choices.some((item) => item.name.toLowerCase() === candidate.name.toLowerCase())) choices.push({ name: candidate.name, provider: candidate.provider });
+    if (candidate.provider && !choices.some((item) => item.name.toLowerCase() === candidate.name.toLowerCase())) choices.push({ name: candidate.name, provider: candidate.provider });
   }
   for (const wallet of discoverStandardWallets()) {
     if (wallet.features["standard:connect"] && wallet.features["solana:signMessage"] && !choices.some((item) => item.name.toLowerCase() === wallet.name.toLowerCase())) choices.push({ name: wallet.name, standardWallet: wallet });
@@ -163,13 +163,13 @@ export function WalletArena() {
   };
 
   const disconnect = async () => {
-    try { await getWalletProvider()?.provider.disconnect?.(); } catch { /* local session still clears */ }
+    // Clear the TradeDuel session locally. The selected provider may be a Wallet Standard wallet.
     window.sessionStorage.removeItem(TOKEN_KEY); window.sessionStorage.removeItem(WALLET_KEY);
     setWallet(""); setToken(""); setWalletProviderName(""); setQueueStatus("idle"); setMatches([]); setNotice("Disconnected. Your wallet remains under your control.");
   };
 
   const joinQueue = async () => {
-    if (!token) { await connect(); return; }
+    if (!token) { setWalletChoices(getWalletChoices()); setWalletPickerOpen(true); return; }
     setBusy(true); setNotice("Joining matchmaking queue…");
     try { const result = await joinMatchmakingQueue({ data: { token, format: gameMode, durationSeconds: duration } }); setQueueStatus(result.status === "matched" ? "matched" : "waiting"); setNotice(result.message); await loadMatches(token); }
     catch (e) { setNotice(e instanceof Error ? e.message : "Could not join the queue."); }
