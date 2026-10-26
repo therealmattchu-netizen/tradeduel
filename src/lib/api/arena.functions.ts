@@ -312,6 +312,7 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
     }
     const signatures = signatureResult;
     const tradeActivity: Array<{signature:string;blockTime:number|null;mint:string;amount:number;direction:"inflow_candidate"|"outflow_candidate";programIds:string[]}> = [];
+    const buyCandidates: Array<{signature:string;blockTime:number|null;mint:string;amount:number;solSpent:number}> = [];
     // Inspect a bounded recent window for wallet token balance changes. These are
     // activity candidates; transfers, airdrops, LP actions, and swaps can look alike.
     const txResults = await Promise.all(signatures.slice(0,12).map(async sig => {
