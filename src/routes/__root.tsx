@@ -11,6 +11,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportApplicationError } from "../lib/error-reporting";
+import { SiteAudio } from "../components/site-audio";
 // Page metadata for browser titles, favicons and social previews.
 import appMetaJson from "../app-meta.json";
 
@@ -158,6 +159,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
+      <SiteAudio />
     </QueryClientProvider>
   );
 }
