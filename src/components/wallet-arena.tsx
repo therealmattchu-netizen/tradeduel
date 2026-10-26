@@ -50,12 +50,25 @@ type WalletChoice = { name: string; provider?: SolanaWalletProvider; standardWal
 function getWalletChoices(): WalletChoice[] {
   if (typeof window === "undefined") return [];
   const choices: WalletChoice[] = [];
-  const candidates: Array<{ name: string; provider?: SolanaWalletProvider }> = [
-    { name: "Phantom", provider: window.phantom?.solana ?? (window.solana?.isPhantom ? window.solana : undefined) },
-    { name: "Solflare", provider: window.solflare ?? (window.solana?.isSolflare ? window.solana : undefined) },
-    { name: "Backpack", provider: (window.backpack && "solana" in window.backpack ? window.backpack.solana : window.backpack as SolanaWalletProvider | undefined) ?? (window.solana?.isBackpack ? window.solana : undefined) },
-  ];
   const seenProviders: SolanaWalletProvider[] = [];
+
+  // Prefer Wallet Standard entries matched by their registered wallet name.
+  // This prevents a generic injected window.solana object from being mislabeled
+  // as Phantom when another extension (for example Backpack) owns that object.
+  for (const wallet of discoverStandardWallets()) {
+    const name = wallet.name.trim();
+    if (!name || !wallet.features["standard:connect"] || !wallet.features["solana:signMessage"]) continue;
+    if (choices.some((item) => item.name.toLowerCase() === name.toLowerCase())) continue;
+    choices.push({ name, standardWallet: wallet });
+  }
+
+  // Only accept injected providers that positively identify themselves as the
+  // wallet being displayed. Namespaces alone are not enough to establish identity.
+  const candidates: Array<{ name: string; provider?: SolanaWalletProvider }> = [
+    { name: "Phantom", provider: window.phantom?.solana?.isPhantom ? window.phantom.solana : (window.solana?.isPhantom ? window.solana : undefined) },
+    { name: "Solflare", provider: window.solflare?.isSolflare ? window.solflare : (window.solana?.isSolflare ? window.solana : undefined) },
+    { name: "Backpack", provider: (window.backpack && "solana" in window.backpack && (window.backpack.solana as SolanaWalletProvider | undefined)?.isBackpack ? window.backpack.solana as SolanaWalletProvider : (window.backpack as SolanaWalletProvider | undefined)?.isBackpack ? window.backpack as SolanaWalletProvider : window.solana?.isBackpack ? window.solana : undefined) },
+  ];
   for (const candidate of candidates) {
     const provider = candidate.provider;
     if (!provider?.connect || !provider.signMessage) continue;
@@ -64,11 +77,9 @@ function getWalletChoices(): WalletChoice[] {
     seenProviders.push(provider);
     choices.push({ name: candidate.name, provider });
   }
-  for (const wallet of discoverStandardWallets()) {
-    if (wallet.features["standard:connect"] && wallet.features["solana:signMessage"] && !choices.some((item) => item.name.toLowerCase() === wallet.name.toLowerCase())) choices.push({ name: wallet.name, standardWallet: wallet });
-  }
-  // Keep Backpack visible in the chooser even when its extension is not detected;
-  // selecting the fallback opens the official install page instead of faking a connection.
+
+  // Keep Backpack visible even when the extension is not detected; its fallback
+  // opens the official install page rather than pretending a connection succeeded.
   if (!choices.some((item) => item.name.toLowerCase() === "backpack")) choices.push({ name: "Backpack" });
   return choices;
 }
