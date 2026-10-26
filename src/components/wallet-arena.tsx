@@ -139,7 +139,7 @@ export function WalletArena() {
         const connected = await provider.connect();
         // Some injected providers resolve connect() without returning a key;
         // read the provider's publicKey after the user approves the connection.
-        publicKey = (connected && "publicKey" in connected ? connected.publicKey : undefined)?.toString() ?? provider.publicKey?.toString() ?? "";
+        publicKey = (connected && typeof connected === "object" && "publicKey" in connected ? connected.publicKey : undefined)?.toString() ?? provider.publicKey?.toString() ?? "";
         if (!publicKey) throw new Error(`${choice.name} opened but did not return an address. Approve the connection in the wallet popup, then retry. If it is already connected, unlock the wallet and try again.`);
         const challenge = await createWalletChallenge({ data: { wallet: publicKey } });
         const signed = await provider.signMessage(new TextEncoder().encode(challenge.message), "utf8");
@@ -218,7 +218,34 @@ export function WalletArena() {
         </div>
       </div>
     </div>}
-    {!wallet && <div className="td-pump-wallet-help"><span className="td-mini-label">USING A PUMP.FUN WALLET?</span><p>If your pump.fun email or Google wallet offers private-key export, import it directly into the official Phantom app or extension, then connect that imported account here. TradeDuel never needs your private key.</p><div className="td-pump-wallet-links"><a href="https://help.phantom.com/articles/import-your-privy-fomo-pump-fun-wallet-into-phantom" target="_blank" rel="noreferrer">Official Phantom import guide ↗</a></div><small>Never paste your private key or recovery phrase into TradeDuel or share it with anyone. Check that the address shown in Phantom exactly matches your Pump.fun trading wallet.</small></div>}
+    {!wallet && <div className="td-pump-wallet-help" style={{ marginTop: "20px", padding: "20px", border: "1px solid rgba(167, 139, 250, 0.28)", borderRadius: "16px", background: "linear-gradient(135deg, rgba(124, 58, 237, 0.12), rgba(15, 12, 28, 0.72))" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+        <div style={{ flex: "0 0 42px", width: "42px", height: "42px", borderRadius: "12px", display: "grid", placeItems: "center", background: "rgba(167, 139, 250, 0.16)", fontSize: "22px" }}>↗</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <span className="td-mini-label">PUMP.FUN WALLET SETUP</span>
+          <h3 style={{ margin: "6px 0 8px", fontSize: "18px" }}>Connect your existing Pump.fun wallet</h3>
+          <p style={{ margin: "0 0 14px", color: "#c9c4d8", fontSize: "13px", lineHeight: 1.6 }}>Export your Pump.fun Solana private key, then import it into a wallet provider below. After importing, return here and connect that same account. Your public address should match your Pump.fun wallet exactly.</p>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: "10px", marginTop: "8px" }}>
+        <a href="https://help.phantom.com/articles/import-your-privy-fomo-pump-fun-wallet-into-phantom-41408635409683" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
+          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Import to Phantom ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official Pump.fun wallet import walkthrough</span>
+        </a>
+        <a href="https://help.solflare.com/en/articles/6134229-how-to-import-your-solana-wallet-into-solflare-using-a-private-key-desktop" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
+          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Import to Solflare ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official Solflare private-key import guide</span>
+        </a>
+        <a href="https://help.phantom.com/articles/28355310978067" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
+          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>More Phantom import options ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official guide for adding an existing account</span>
+        </a>
+        <a href="https://www.solflare.com/guides/how-to-export-and-import-wallets-in-solflare/" target="_blank" rel="noreferrer" style={{ display: "block", padding: "13px", border: "1px solid rgba(167, 139, 250, 0.3)", borderRadius: "12px", color: "inherit", textDecoration: "none", background: "rgba(255,255,255,0.035)" }}>
+          <strong style={{ display: "block", fontSize: "13px", marginBottom: "5px" }}>Solflare wallet guide ↗</strong><span style={{ display: "block", color: "#b9b5ca", fontSize: "12px", lineHeight: 1.45 }}>Official export and import overview</span>
+        </a>
+      </div>
+      <div style={{ marginTop: "14px", padding: "11px 12px", borderRadius: "10px", background: "rgba(245, 158, 11, 0.08)", border: "1px solid rgba(245, 158, 11, 0.22)" }}>
+        <strong style={{ display: "block", fontSize: "12px", marginBottom: "4px" }}>Security reminder</strong>
+        <small style={{ color: "#d8d2e5", fontSize: "12px", lineHeight: 1.55 }}>Only enter your private key inside the official wallet app or extension you chose. Never paste it into TradeDuel, a website form, or a chat. Verify the imported public address matches Pump.fun before connecting.</small>
+      </div>
+    </div>}
     {wallet && <div className="td-queue-setup"><div className="td-config-field"><label htmlFor="td-game-mode">GAME MODE</label><select id="td-game-mode" value={gameMode} onChange={e=>setGameMode(e.target.value as typeof gameMode)} disabled={busy||queueStatus!=="idle"}><option value="standard">Standard</option><option value="one_position">One Position</option><option value="exposure_cap">Exposure Cap</option><option value="equal_start">Equal Start</option></select><small>{gameMode === "standard" ? "Standard head-to-head format. Trading performance and ELO are not scored in this alpha." : gameMode === "one_position" ? "Proposed rule: only one open position per player. Enforcement is not live yet." : gameMode === "exposure_cap" ? "Proposed rule: apply the same maximum position exposure to both players. Enforcement is not live yet." : "Proposed rule: compare normalized returns from an equal starting allocation. Enforcement is not live yet."}</small></div><div className="td-config-field"><label htmlFor="td-duration">MATCH DURATION</label><select id="td-duration" value={duration} onChange={e=>setDuration(Number(e.target.value))} disabled={busy||queueStatus!=="idle"}><option value={900}>15 minutes</option><option value={1800}>30 minutes</option><option value={3600}>1 hour</option><option value={7200}>2 hours</option><option value={14400}>4 hours</option><option value={28800}>8 hours</option><option value={86400}>1 day</option></select><small>Timer begins when an opponent is paired. Longer durations are for matchmaking queue testing; verified trading results are not scored yet.</small></div></div>}
     {wallet && <div className="td-queue-controls"><div><span className="td-mini-label">MATCHMAKING QUEUE</span><p>Queue pairing is available for alpha testing. Mode rules and verified trade scoring are still in development.</p></div>{queueStatus === "waiting" ? <button className="td-secondary-action" onClick={leaveQueue} disabled={busy}>Leave queue</button> : <button className="td-primary-action" onClick={joinQueue} disabled={busy || queueStatus === "matched"}>{busy ? "Please wait…" : queueStatus === "matched" ? "Match found" : "Find an opponent"}</button>}</div>}
     <p className="td-wallet-notice" role="status">{notice}</p>
