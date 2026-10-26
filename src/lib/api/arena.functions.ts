@@ -300,35 +300,43 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   const start = match.started_at ? Math.floor(new Date(match.started_at).getTime()/1000) : 0;
   const end = match.ends_at ? Math.floor(new Date(match.ends_at).getTime()/1000) : Math.floor(Date.now()/1000);
   let indexed = 0;
+  let indexingErrors = 0;
   const participants = [...new Set([match.player_one, match.player_two].filter((address): address is string => Boolean(address)))];
   for (const trackedWallet of participants) {
   // Page signatures from a durable cursor and queue them before processing. This
   // prevents the old fixed-latest-100 scan from permanently missing older match activity.
   let state = await DB.prepare("SELECT before_signature,exhausted FROM td_match_index_state WHERE match_id = ? AND wallet = ?")
     .bind(match.id, trackedWallet).first<{before_signature:string|null;exhausted:number}>();
-  if (!state || !state.exhausted) {
-    const options:Record<string,unknown> = {limit:100,commitment:"confirmed"};
-    if (state?.before_signature) options.before = state.before_signature;
-    const page = await rpcCall("getSignaturesForAddress",[trackedWallet,options]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
-    let exhausted = page.length === 0;
-    for (const sig of page) {
-      if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
+  try {
+    if (!state || !state.exhausted) {
+      const options:Record<string,unknown> = {limit:100,commitment:"confirmed"};
+      if (state?.before_signature) options.before = state.before_signature;
+      const page = await rpcCall("getSignaturesForAddress",[trackedWallet,options]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
+      let exhausted = page.length === 0;
+      for (const sig of page) {
+        if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
+          await DB.prepare("INSERT OR IGNORE INTO td_match_index_queue (match_id,wallet,signature,slot,block_time,tx_error_json) VALUES (?,?,?,?,?,?)")
+            .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
+        }
+        if (sig.blockTime !== null && sig.blockTime < start) exhausted = true;
+      }
+      const nextCursor = page.length ? page[page.length-1].signature : (state?.before_signature ?? null);
+      await DB.prepare("INSERT INTO td_match_index_state (match_id,wallet,before_signature,exhausted,pages_fetched,last_checked_at) VALUES (?,?,?,?,1,datetime('now')) ON CONFLICT(match_id,wallet) DO UPDATE SET before_signature=excluded.before_signature,exhausted=excluded.exhausted,pages_fetched=td_match_index_state.pages_fetched+1,last_checked_at=datetime('now')")
+        .bind(match.id,trackedWallet,nextCursor,exhausted?1:0).run();
+    } else {
+      // Once the historical cursor is exhausted, keep checking newest signatures for
+      // late confirmations and newly visible transactions without rewinding old pages.
+      const recent = await rpcCall("getSignaturesForAddress",[trackedWallet,{limit:25,commitment:"confirmed"}]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
+      for (const sig of recent) if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
         await DB.prepare("INSERT OR IGNORE INTO td_match_index_queue (match_id,wallet,signature,slot,block_time,tx_error_json) VALUES (?,?,?,?,?,?)")
           .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
       }
-      if (sig.blockTime !== null && sig.blockTime < start) exhausted = true;
     }
-    const nextCursor = page.length ? page[page.length-1].signature : (state?.before_signature ?? null);
-    await DB.prepare("INSERT INTO td_match_index_state (match_id,wallet,before_signature,exhausted,pages_fetched,last_checked_at) VALUES (?,?,?,?,1,datetime('now')) ON CONFLICT(match_id,wallet) DO UPDATE SET before_signature=excluded.before_signature,exhausted=excluded.exhausted,pages_fetched=td_match_index_state.pages_fetched+1,last_checked_at=datetime('now')")
-      .bind(match.id,trackedWallet,nextCursor,exhausted?1:0).run();
-  } else {
-    // Once the historical cursor is exhausted, keep checking newest signatures for
-    // late confirmations and newly visible transactions without rewinding old pages.
-    const recent = await rpcCall("getSignaturesForAddress",[trackedWallet,{limit:25,commitment:"confirmed"}]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
-    for (const sig of recent) if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
-      await DB.prepare("INSERT OR IGNORE INTO td_match_index_queue (match_id,wallet,signature,slot,block_time,tx_error_json) VALUES (?,?,?,?,?,?)")
-        .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
-    }
+  
+  } catch {
+    // Transaction indexing must not prevent portfolio snapshots from being captured.
+    // The next room sync retries signature discovery; ELO remains blocked if evidence is missing.
+    indexingErrors++;
   }
   // Quarantine repeatedly unavailable transactions rather than retrying them on every room poll.
   await DB.prepare("UPDATE td_match_index_queue SET status='skipped',last_error=COALESCE(last_error,'retry_limit_reached'),updated_at=datetime('now') WHERE match_id=? AND wallet=? AND status='retry' AND attempts>=8")
@@ -493,7 +501,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   const events = await DB.prepare("SELECT wallet,signature,block_time,slot,success,pump_fun_related,sol_delta,token_deltas_json,event_type FROM td_match_events WHERE match_id = ? ORDER BY block_time DESC LIMIT 60").bind(match.id).all<{wallet:string;signature:string;block_time:number|null;slot:number|null;success:number;pump_fun_related:number;sol_delta:number;token_deltas_json:string;event_type:string}>();
   const valuations = await DB.prepare("SELECT wallet,phase,observed_at,portfolio_usd,priced_mints,unpriced_mints,complete,integrity_note FROM td_match_valuations WHERE match_id = ? ORDER BY observed_at DESC").bind(match.id).all<{wallet:string;phase:string;observed_at:number;portfolio_usd:number|null;priced_mints:number;unpriced_mints:number;complete:number;integrity_note:string}>();
   const priceEvidence = await DB.prepare("SELECT wallet,phase,mint,price_usd,liquidity_usd,source,observed_at,quote_kind,accepted,reason FROM td_match_price_evidence WHERE match_id = ? ORDER BY observed_at DESC,mint LIMIT 100").bind(match.id).all<{wallet:string;phase:string;mint:string;price_usd:number|null;liquidity_usd:number|null;source:string;observed_at:number;quote_kind:string;accepted:number;reason:string}>();
-  return { matchId:match.id, indexed, events:(events.results??[]).map(e=>({...e,tokenDeltas:JSON.parse(e.token_deltas_json),token_deltas_json:undefined,success:Boolean(e.success),pump_fun_related:Boolean(e.pump_fun_related)})), valuations:valuations.results??[], valuationObservations:(observations.results??[]).map(row=>({...row,complete:Boolean(row.complete)})), priceEvidence:(priceEvidence.results??[]).map(row=>({...row,accepted:Boolean(row.accepted)})), status:"activity_and_valuation_evidence", note:"Buy/sell labels are instruction-log candidates. Portfolio values and valuationObservations are sampled spot-price estimates at sync time, not historical prices between syncs, and may be incomplete. They are not official P&L; transfers, fees, token eligibility, price quality, and both players' snapshots require reconciliation before scoring." };
+  return { matchId:match.id, indexed, events:(events.results??[]).map(e=>({...e,tokenDeltas:JSON.parse(e.token_deltas_json),token_deltas_json:undefined,success:Boolean(e.success),pump_fun_related:Boolean(e.pump_fun_related)})), valuations:valuations.results??[], valuationObservations:(observations.results??[]).map(row=>({...row,complete:Boolean(row.complete)})), priceEvidence:(priceEvidence.results??[]).map(row=>({...row,accepted:Boolean(row.accepted)})), status:"activity_and_valuation_evidence", note:`Buy/sell labels are instruction-log candidates. Portfolio values and valuationObservations are sampled spot-price estimates at sync time, not historical prices between syncs, and may be incomplete. They are not official P&L; transfers, fees, token eligibility, price quality, and both players' snapshots require reconciliation before scoring.${indexingErrors ? ` Signature indexing failed for ${indexingErrors} wallet(s) on this poll; portfolio monitoring continued and indexing will retry.` : ""}` };
 });
 
 /**
