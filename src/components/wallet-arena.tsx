@@ -230,11 +230,18 @@ export function WalletArena() {
             // window.phantom.solana API or the legacy window.solana API.
             // The legacy API is accepted only when it positively identifies
             // itself as Phantom, so Backpack cannot capture this button.
+            const namespacedPhantom = window.phantom?.solana;
+            const legacySolana = window.solana;
+            const backpackProvider = window.backpack && "solana" in window.backpack
+              ? window.backpack.solana as SolanaWalletProvider | undefined
+              : window.backpack as SolanaWalletProvider | undefined;
+            const isBackpackProvider = (provider: SolanaWalletProvider | undefined) =>
+              Boolean(provider && (provider.isBackpack === true || provider === backpackProvider));
             const phantomProvider =
-              window.phantom?.solana?.isPhantom === true && !window.phantom.solana.isBackpack
-                ? window.phantom.solana
-                : window.solana?.isPhantom === true && !window.solana.isBackpack
-                  ? window.solana
+              namespacedPhantom?.isPhantom === true && !isBackpackProvider(namespacedPhantom)
+                ? namespacedPhantom
+                : legacySolana?.isPhantom === true && !isBackpackProvider(legacySolana)
+                  ? legacySolana
                   : undefined;
             if (phantomProvider) {
               void connectWallet({ name: "Phantom", provider: phantomProvider });
@@ -252,7 +259,9 @@ export function WalletArena() {
               return;
             }
             window.open("https://phantom.app/download", "_blank", "noopener,noreferrer");
-            setNotice("Phantom's own provider was not detected. TradeDuel blocked the ambiguous injected provider rather than opening Backpack. Install or enable Phantom, then reload.");
+            setNotice(namespacedPhantom || legacySolana
+              ? "A Solana wallet provider is present, but it did not identify itself as Phantom (or matched Backpack). TradeDuel blocked it to avoid opening the wrong wallet. Check that the Phantom extension is enabled, then reload."
+              : "Phantom's provider was not detected in this browser. Enable/install the Phantom extension, then reload TradeDuel.");
             return;
           }
           if (!choice.provider && !choice.standardWallet && choice.name === "Backpack") {
