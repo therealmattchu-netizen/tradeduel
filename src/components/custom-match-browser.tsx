@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { createCustomMatch, getCustomMatchChat, getCustomMatchStatus, joinCustomMatch, listCustomMatches, sendCustomMatchChat, syncMatchActivity, reconcileCustomMatchSettlement, getMyRating } from "@/lib/api/arena.functions";
+import { createCustomMatch, getCustomMatchChat, getCustomMatchStatus, joinCustomMatch, listCustomMatches, sendCustomMatchChat, syncMatchActivity, reconcileCustomMatchSettlement } from "@/lib/api/arena.functions";
 
 type CustomMatch = { id:string; creator_wallet:string; mode:string; visibility:string; max_players:number; duration_seconds:number; status:string; created_at:string; players_count:number };
 type ChatMessage = { id:number; wallet:string; channel:string; message:string; created_at:string; team_number:number };
@@ -27,7 +27,6 @@ export function CustomMatchBrowser() {
   const [liveActivity,setLiveActivity] = useState<any>(null);
   const [verifiedSettlement,setVerifiedSettlement] = useState<any>(null);
   const [clockNow,setClockNow] = useState(Date.now());
-  const [rating,setRating] = useState<{rating:number;wins:number;losses:number;draws:number;eloActive:boolean}|null>(null);
 
   const refresh = useCallback(async () => {
     try { const result = await listCustomMatches(); setMatches(result.matches as CustomMatch[]); }
@@ -35,23 +34,6 @@ export function CustomMatchBrowser() {
   }, []);
 
   useEffect(() => { void refresh(); const timer=window.setInterval(()=>void refresh(),10000); return()=>window.clearInterval(timer); },[refresh]);
-
-  useEffect(() => {
-    let alive = true;
-    const loadRating = async () => {
-      const token = window.sessionStorage.getItem("td_session_token") || "";
-      if (!token) { if (alive) setRating(null); return; }
-      try {
-        const result = await getMyRating({ data: { token } });
-        if (alive) setRating(result);
-      } catch {
-        if (alive) setRating(null);
-      }
-    };
-    void loadRating();
-    const timer = window.setInterval(() => void loadRating(), 15000);
-    return () => { alive = false; window.clearInterval(timer); };
-  }, []);
 
 
   useEffect(() => {
@@ -152,14 +134,6 @@ export function CustomMatchBrowser() {
   const buttonStyle:React.CSSProperties={border:"1px solid var(--td-border)",background:"var(--td-accent-soft)",color:"var(--td-text)",borderRadius:6,padding:"9px 12px",cursor:"pointer"};
   const fieldStyle:React.CSSProperties={width:"100%",background:"var(--td-bg)",color:"var(--td-text)",border:"1px solid var(--td-border)",borderRadius:6,padding:10};
   return <section style={{marginTop:24,display:"grid",gap:16}}>
-    <div style={cardStyle}>
-      <p className="td-overline">PLAYER RATING</p>
-      <div style={{display:"flex",alignItems:"baseline",gap:14,flexWrap:"wrap"}}>
-        <strong style={{fontSize:26,color:"var(--td-text)"}}>{rating?.rating ?? 1000} ELO</strong>
-        <span style={{fontSize:13,color:"var(--td-muted)"}}>Record {rating?.wins ?? 0}W · {rating?.losses ?? 0}L · {rating?.draws ?? 0}D</span>
-      </div>
-      <small style={{color:"var(--td-muted)"}}>{rating?.eloActive ? "Rating updates from verified match results." : "Starting rating only · ELO updates remain disabled until results are verified."}</small>
-    </div>
     <div style={cardStyle}>
       <p className="td-overline">MATCHMAKING MODES</p><h2 style={{marginTop:4}}>Choose how you want to play</h2><p>Select a game type, create a password-protected private lobby, or browse public rooms.</p>
       <div style={{display:"flex",gap:10,flexWrap:"wrap"}}><button type="button" style={{...buttonStyle,opacity:activePanel==="modes"?1:.65}} onClick={()=>{setActivePanel("modes");setVisibility("public")}}>Game modes</button><button type="button" style={{...buttonStyle,opacity:activePanel==="private"?1:.65}} onClick={()=>{setActivePanel("private");setVisibility("private")}}>Create private lobby</button><button type="button" style={{...buttonStyle,opacity:activePanel==="browse"?1:.65}} onClick={()=>setActivePanel("browse")}>Browse public lobbies</button></div>
