@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { createCustomMatch, getCustomMatchChat, joinCustomMatch, listCustomMatches, sendCustomMatchChat } from "@/lib/api/arena.functions";
+import { createCustomMatch, getCustomMatchChat, joinCustomMatch, listCustomMatches, sendCustomMatchChat, syncMatchActivity } from "@/lib/api/arena.functions";
 
 type CustomMatch = { id:string; creator_wallet:string; mode:string; visibility:string; max_players:number; duration_seconds:number; status:string; created_at:string; players_count:number };
 type ChatMessage = { id:number; wallet:string; channel:string; message:string; created_at:string; team_number:number };
@@ -24,6 +24,8 @@ export function CustomMatchBrowser() {
   const [draft,setDraft] = useState("");
   const [team,setTeam] = useState<number|null>(null);
   const [latestId,setLatestId] = useState(0);
+  const [liveActivity,setLiveActivity] = useState<any>(null);
+  const [clockNow,setClockNow] = useState(Date.now());
 
   const refresh = useCallback(async () => {
     try { const result = await listCustomMatches(); setMatches(result.matches as CustomMatch[]); }
@@ -48,6 +50,14 @@ export function CustomMatchBrowser() {
     void poll();const timer=window.setInterval(()=>void poll(),2500);
     return()=>{alive=false;window.clearInterval(timer)};
   },[selected,channel,latestId]);
+
+  useEffect(() => {
+    if (!selected) { setLiveActivity(null); return; }
+    let alive=true;
+    const pollActivity=async()=>{ const token=window.sessionStorage.getItem("td_session_token")||""; if(!token)return; try { const activity=await syncMatchActivity({data:{token,matchId:selected.id}}) as any; if(!alive)return; setLiveActivity(activity); if(activity.customRoom) setSelected(previous=>previous&&previous.id===selected.id?{...previous,status:activity.customRoom.status,players_count:activity.customRoom.members?.length??previous.players_count}:previous); } catch(error) { if(alive) setNotice(error instanceof Error?error.message:"Live match activity could not be synchronized."); } };
+    void pollActivity(); const pollTimer=window.setInterval(()=>void pollActivity(),10000); const clockTimer=window.setInterval(()=>setClockNow(Date.now()),1000);
+    return()=>{alive=false;window.clearInterval(pollTimer);window.clearInterval(clockTimer)};
+  },[selected?.id]);
 
   const create = async () => {
     const token=window.sessionStorage.getItem("td_session_token")||"";
@@ -113,8 +123,10 @@ export function CustomMatchBrowser() {
     </div>}
     {selected&&<div style={cardStyle}>
       <div style={{display:"flex",justifyContent:"space-between",gap:12,alignItems:"center",flexWrap:"wrap"}}><div><p className="td-overline">ROOM {selected.id.slice(0,8).toUpperCase()}</p><h2>{modeName(selected.mode)} · Team {team??"—"}</h2><small style={{overflowWrap:"anywhere"}}>Room ID: {selected.id}</small><button type="button" style={{...buttonStyle,marginTop:8}} onClick={()=>{void navigator.clipboard.writeText(selected.id);setNotice("Room ID copied. Share it with invited players along with the lobby password.")}}>Copy room ID</button></div><button style={buttonStyle} onClick={()=>setSelected(null)}>Close room panel</button></div>
+      {liveActivity?.customRoom&&<div style={{marginTop:14,padding:12,border:"1px solid var(--td-border)",borderRadius:8}}><p className="td-overline">LIVE ROOM STATUS</p><strong>{liveActivity.customRoom.status==="open"?"WAITING FOR PLAYERS":liveActivity.customRoom.status==="active"?"MATCH LIVE":liveActivity.customRoom.status==="completed"?"TIME EXPIRED · REVIEW REQUIRED":liveActivity.customRoom.status.toUpperCase()}</strong><p>{liveActivity.customRoom.members.length}/{liveActivity.customRoom.maxPlayers} players · {liveActivity.customRoom.mode==="head_to_head"?"1v1":liveActivity.customRoom.mode==="duo"?"2v2 team duel":"team battle"}</p>{liveActivity.customRoom.members.map((member:any)=><div key={member.wallet} style={{display:"flex",justifyContent:"space-between",gap:10,padding:"5px 0"}}><span>{short(member.wallet)}</span><span>TEAM {member.team_number}</span></div>)}{liveActivity.customRoom.endsAt&&liveActivity.customRoom.status==="active"&&<p>Time remaining: {Math.max(0,Math.ceil((new Date(liveActivity.customRoom.endsAt).getTime()-clockNow)/1000/60))} min</p>}</div>}
       <div style={{display:"flex",gap:8,margin:"12px 0"}}><button style={{...buttonStyle,opacity:channel==="all"?1:.65}} onClick={()=>{setChannel("all");setMessages([]);setLatestId(0)}}>All chat</button><button style={{...buttonStyle,opacity:channel==="team"?1:.65}} onClick={()=>{setChannel("team");setMessages([]);setLatestId(0)}}>Team chat</button></div>
       <div style={{maxHeight:260,overflowY:"auto",display:"grid",gap:8,padding:10,border:"1px solid var(--td-border)",borderRadius:8}}>{messages.map(m=><div key={m.id}><strong>{short(m.wallet)} · Team {m.team_number}</strong><div>{m.message}</div><small style={{color:"var(--td-muted)"}}>{new Date(m.created_at+"Z").toLocaleTimeString()}</small></div>)}{messages.length===0&&<p>No messages yet. Say hello to your match.</p>}</div>
+      {liveActivity?.customRoom?.status==="active"&&<div style={{marginTop:14,padding:12,border:"1px solid var(--td-border)",borderRadius:8}}><p className="td-overline">LIVE ESTIMATED SCORING</p><p>Scores use complete portfolio observations only. They are not verified fills, and no winner or ELO is awarded from this estimate.</p>{(liveActivity.customRoom.members as Array<{wallet:string;team_number:number}>).map(member=>{const samples=(liveActivity.valuationObservations??[]).filter((o:any)=>o.wallet===member.wallet&&o.complete&&o.portfolio_usd!==null).sort((a:any,b:any)=>a.observed_at-b.observed_at);const first=samples[0],latest=samples[samples.length-1];const pct=first&&latest&&first.portfolio_usd>0?((latest.portfolio_usd-first.portfolio_usd)/first.portfolio_usd)*100:null;return <div key={member.wallet} style={{display:"flex",justifyContent:"space-between",gap:12,padding:"7px 0",borderBottom:"1px solid var(--td-border)"}}><span>{short(member.wallet)} · Team {member.team_number}</span><strong>{pct===null?"Collecting evidence":(pct>=0?"+":"")+pct.toFixed(2)+"%"}</strong></div>})}<p style={{marginTop:12}}><strong>Transaction ledger · {(liveActivity.accountingLedger??[]).length} indexed entries</strong></p>{(liveActivity.accountingLedger??[]).slice(0,8).map((row:any)=><div key={row.wallet+row.signature} style={{padding:"7px 0",borderBottom:"1px solid var(--td-border)"}}><a href={"https://explorer.solana.com/tx/"+row.signature} target="_blank" rel="noreferrer">{row.signature.slice(0,10)}…{row.signature.slice(-6)} ↗</a><small style={{display:"block"}}>{short(row.wallet)} · Fee {(row.fee_lamports/1e9).toFixed(9)} SOL · {row.protocols?.join(", ")||"Unknown protocol"}</small><small style={{display:"block"}}>{row.blockers?.length?row.blockers.map((b:string)=>b.replaceAll("_"," ")).join("; "):"No stored blockers"}</small></div>)}</div>}
       <form onSubmit={e=>{e.preventDefault();void send()}} style={{display:"flex",gap:8,marginTop:10}}><input style={fieldStyle} value={draft} onChange={e=>setDraft(e.target.value)} maxLength={500} placeholder={channel==="all"?"Message everyone…":"Message your team…"} /><button style={buttonStyle} type="submit" disabled={!draft.trim()}>Send</button></form>
     </div>}
     {notice&&<p role="status" style={{color:"var(--td-muted)"}}>{notice}</p>}
