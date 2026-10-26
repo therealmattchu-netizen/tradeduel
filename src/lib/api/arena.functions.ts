@@ -327,9 +327,9 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       const deltas=new Map<string,number>();
       for(const b of tx.meta.preTokenBalances??[]) if(b.owner===wallet&&b.mint) deltas.set(b.mint,-Number(b.uiTokenAmount?.uiAmount??0));
       for(const b of tx.meta.postTokenBalances??[]) if(b.owner===wallet&&b.mint) deltas.set(b.mint,(deltas.get(b.mint)??0)+Number(b.uiTokenAmount?.uiAmount??0));
-      const programIds=[...new Set((tx.transaction?.message?.instructions??[]).map((ix:any)=>String(ix.programId??"")).filter(Boolean))];
+      const programIds: string[]=[...new Set<string>((tx.transaction?.message?.instructions??[]).map((ix:any)=>String(ix.programId??"")).filter((id:string)=>Boolean(id)))];
       for(const inner of tx.meta.innerInstructions??[]) for(const ix of inner.instructions??[]) if(ix.programId) programIds.push(String(ix.programId));
-      for(const [mint,amount] of deltas) if(Number.isFinite(amount)&&Math.abs(amount)>1e-10) tradeActivity.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,direction:amount>0?"inflow_candidate":"outflow_candidate",programIds:[...new Set(programIds)]});
+      for(const [mint,amount] of deltas) if(Number.isFinite(amount)&&Math.abs(amount)>1e-10) tradeActivity.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,direction:amount>0?"inflow_candidate":"outflow_candidate",programIds:[...new Set<string>(programIds)]});
     }
     const mints=[...holdings.keys()].slice(0,30);
     const prices=new Map<string,{priceUsd:number|null;liquidityUsd:number|null;pairUrl:string|null}>();
