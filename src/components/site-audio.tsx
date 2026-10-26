@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouterState } from "@tanstack/react-router";
 
 type AudioPrefs = { music: boolean; effects: boolean };
+type Scene = "duel" | "lobby";
 const PREF_KEY = "tradeduel-audio-prefs-v1";
 
 function readPrefs(): AudioPrefs {
@@ -20,12 +21,15 @@ export function SiteAudio() {
   const [prefs, setPrefs] = useState<AudioPrefs>({ music: true, effects: true });
   const [started, setStarted] = useState(false);
   const audioRef = useRef<AudioContext | null>(null);
-  const musicNodesRef = useRef<OscillatorNode[]>([]);
+  const masterRef = useRef<GainNode | null>(null);
   const musicGainRef = useRef<GainNode | null>(null);
   const prefsRef = useRef(prefs);
-  const sceneRef = useRef<"duel" | "lobby">("lobby");
+  const sceneRef = useRef<Scene>("lobby");
+  const lastPathRef = useRef(pathname);
+  const sequenceTimerRef = useRef<number | null>(null);
+  const sequenceIndexRef = useRef(0);
 
-  const scene: "duel" | "lobby" = /\/match\/[^/]+/.test(pathname) ? "duel" : "lobby";
+  const scene: Scene = /\/match\/[^/]+/.test(pathname) ? "duel" : "lobby";
 
   useEffect(() => {
     const initial = readPrefs();
@@ -33,80 +37,169 @@ export function SiteAudio() {
     prefsRef.current = initial;
   }, []);
 
-  useEffect(() => {
-    prefsRef.current = prefs;
-    try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* Settings still work for this session. */ }
-    if (musicGainRef.current && audioRef.current) {
-      const target = prefs.music ? (sceneRef.current === "duel" ? 0.085 : 0.055) : 0;
-      musicGainRef.current.gain.setTargetAtTime(target, audioRef.current.currentTime, 0.8);
-    }
-  }, [prefs]);
-
-  useEffect(() => {
-    sceneRef.current = scene;
-    if (musicGainRef.current && audioRef.current) {
-      musicGainRef.current.gain.setTargetAtTime(prefsRef.current.music ? (scene === "duel" ? 0.085 : 0.055) : 0, audioRef.current.currentTime, 1.4);
-    }
-  }, [scene]);
-
-  function ensureAudio() {
-    if (typeof window === "undefined") return null;
-    const AudioContextClass = window.AudioContext;
-    if (!AudioContextClass) return null;
+  const ensureAudio = useCallback(() => {
+    if (typeof window === "undefined" || !window.AudioContext) return null;
     if (!audioRef.current) {
-      const ctx = new AudioContextClass();
-      audioRef.current = ctx;
+      const ctx = new window.AudioContext();
       const master = ctx.createGain();
-      master.gain.value = 1;
+      master.gain.value = 0.82;
       master.connect(ctx.destination);
       const musicGain = ctx.createGain();
-      musicGain.gain.value = prefsRef.current.music ? (sceneRef.current === "duel" ? 0.085 : 0.055) : 0;
+      musicGain.gain.value = 0;
       musicGain.connect(master);
+      audioRef.current = ctx;
+      masterRef.current = master;
       musicGainRef.current = musicGain;
-      const notes = sceneRef.current === "duel" ? [55, 82.41, 110] : [65.41, 98, 130.81];
-      const oscillators = notes.map((frequency, index) => {
-        const osc = ctx.createOscillator();
-        const filter = ctx.createBiquadFilter();
-        const voiceGain = ctx.createGain();
-        osc.type = index === 0 ? "sine" : "triangle";
-        osc.frequency.value = frequency;
-        filter.type = "lowpass";
-        filter.frequency.value = sceneRef.current === "duel" ? 180 : 240;
-        voiceGain.gain.value = index === 0 ? 0.5 : 0.28;
-        osc.connect(filter);
-        filter.connect(voiceGain);
-        voiceGain.connect(musicGain);
-        osc.start();
-        return osc;
-      });
-      musicNodesRef.current = oscillators;
       setStarted(true);
     }
     if (audioRef.current.state === "suspended") void audioRef.current.resume();
     return audioRef.current;
-  }
+  }, []);
 
+  const playTone = useCallback((frequency: number, duration: number, volume: number, type: OscillatorType = "sine", endFrequency?: number) => {
+    const ctx = ensureAudio();
+    if (!ctx || !prefsRef.current.effects) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(frequency, ctx.currentTime);
+    if (endFrequency) osc.frequency.exponentialRampToValueAtTime(endFrequency, ctx.currentTime + duration);
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(volume, ctx.currentTime + Math.min(0.018, duration / 4));
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + duration + 0.01);
+  }, [ensureAudio]);
+
+  const playNavigation = useCallback((kind: "page" | "duel") => {
+    if (!prefsRef.current.effects) return;
+    if (kind === "duel") {
+      // Bright, two-note arrival chime for entering a match.
+      playTone(880, 0.22, 0.13, "sine", 1046.5);
+      window.setTimeout(() => playTone(1318.5, 0.32, 0.105, "sine", 1568), 90);
+    } else {
+      // Soft, quick UI tick for normal page navigation.
+      playTone(680, 0.075, 0.055, "triangle", 510);
+    }
+  }, [playTone]);
+
+  useEffect(() => {
+    prefsRef.current = prefs;
+    try { localStorage.setItem(PREF_KEY, JSON.stringify(prefs)); } catch { /* Session-only preferences are fine. */ }
+    const ctx = audioRef.current;
+    if (ctx && musicGainRef.current) {
+      musicGainRef.current.gain.setTargetAtTime(prefs.music ? (sceneRef.current === "duel" ? 0.22 : 0.15) : 0, ctx.currentTime, 0.45);
+    }
+  }, [prefs]);
+
+  // Synthesized looping melodies: cheerful plucked major-key notes in the lobby;
+  // tense minor-key arpeggios with a low pulse during a duel.
+  useEffect(() => {
+    sceneRef.current = scene;
+    const ctx = ensureAudio();
+    if (!ctx || !musicGainRef.current) return;
+    if (sequenceTimerRef.current !== null) window.clearTimeout(sequenceTimerRef.current);
+    sequenceIndexRef.current = 0;
+    musicGainRef.current.gain.setTargetAtTime(prefsRef.current.music ? (scene === "duel" ? 0.22 : 0.15) : 0, ctx.currentTime, 0.8);
+
+    const lobbyNotes = [261.63, 329.63, 392, 523.25, 392, 329.63, 293.66, 392, 440, 523.25, 440, 392];
+    const duelNotes = [110, 164.81, 146.83, 220, 130.81, 196, 123.47, 185, 110, 164.81, 207.65, 164.81];
+    const step = () => {
+      const current = audioRef.current;
+      if (!current || current.state !== "running") {
+        sequenceTimerRef.current = window.setTimeout(step, 500);
+        return;
+      }
+      const i = sequenceIndexRef.current % (scene === "duel" ? duelNotes.length : lobbyNotes.length);
+      const now = current.currentTime;
+      if (prefsRef.current.music) {
+        if (scene === "lobby") {
+          const note = lobbyNotes[i];
+          const osc = current.createOscillator();
+          const filter = current.createBiquadFilter();
+          const gain = current.createGain();
+          osc.type = "triangle";
+          osc.frequency.setValueAtTime(note, now);
+          filter.type = "lowpass";
+          filter.frequency.value = 1500;
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(0.12, now + 0.025);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+          osc.connect(filter);
+          filter.connect(gain);
+          gain.connect(musicGainRef.current!);
+          osc.start(now);
+          osc.stop(now + 0.44);
+          if (i % 3 === 0) {
+            const bass = current.createOscillator();
+            const bassGain = current.createGain();
+            bass.type = "sine";
+            bass.frequency.value = note / 2;
+            bassGain.gain.setValueAtTime(0.0001, now);
+            bassGain.gain.exponentialRampToValueAtTime(0.055, now + 0.03);
+            bassGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+            bass.connect(bassGain);
+            bassGain.connect(musicGainRef.current!);
+            bass.start(now);
+            bass.stop(now + 0.52);
+          }
+        } else {
+          const note = duelNotes[i];
+          const osc = current.createOscillator();
+          const filter = current.createBiquadFilter();
+          const gain = current.createGain();
+          osc.type = "sawtooth";
+          osc.frequency.setValueAtTime(note, now);
+          filter.type = "lowpass";
+          filter.frequency.value = 430;
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(0.105, now + 0.035);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.48);
+          osc.connect(filter);
+          filter.connect(gain);
+          gain.connect(musicGainRef.current!);
+          osc.start(now);
+          osc.stop(now + 0.5);
+          if (i % 2 === 0) {
+            const sub = current.createOscillator();
+            const subGain = current.createGain();
+            sub.type = "sine";
+            sub.frequency.setValueAtTime(55, now);
+            sub.frequency.exponentialRampToValueAtTime(43, now + 0.32);
+            subGain.gain.setValueAtTime(0.0001, now);
+            subGain.gain.exponentialRampToValueAtTime(0.16, now + 0.025);
+            subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
+            sub.connect(subGain);
+            subGain.connect(musicGainRef.current!);
+            sub.start(now);
+            sub.stop(now + 0.4);
+          }
+        }
+      }
+      sequenceIndexRef.current += 1;
+      sequenceTimerRef.current = window.setTimeout(step, scene === "duel" ? 360 : 300);
+    };
+    sequenceTimerRef.current = window.setTimeout(step, 100);
+    return () => {
+      if (sequenceTimerRef.current !== null) window.clearTimeout(sequenceTimerRef.current);
+    };
+  }, [scene, ensureAudio]);
+
+  // Start/resume audio on the first user gesture, then sound route changes.
   useEffect(() => {
     const onFirstGesture = () => { ensureAudio(); };
     const onClick = (event: MouseEvent) => {
       const target = event.target;
       if (!(target instanceof Element)) return;
-      const button = target.closest("button, [role='button'], a[data-audio-click]");
-      if (!button || button.hasAttribute("data-audio-silent") || !prefsRef.current.effects) return;
-      const ctx = ensureAudio();
-      if (!ctx) return;
-      const oscillator = ctx.createOscillator();
-      const gain = ctx.createGain();
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(740, ctx.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(520, ctx.currentTime + 0.075);
-      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.075, ctx.currentTime + 0.008);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12);
-      oscillator.connect(gain);
-      gain.connect(ctx.destination);
-      oscillator.start();
-      oscillator.stop(ctx.currentTime + 0.13);
+      const control = target.closest("button, [role='button'], a");
+      if (!control || control.hasAttribute("data-audio-silent")) return;
+      const isAudioControl = control.closest("[aria-label='Audio settings']");
+      if (isAudioControl) return;
+      const isLink = control instanceof HTMLAnchorElement || control.getAttribute("role") === "link";
+      if (isLink) return; // Navigation chime plays after the route changes.
+      if (prefsRef.current.effects) playTone(620, 0.085, 0.045, "triangle", 470);
     };
     document.addEventListener("pointerdown", onFirstGesture, { once: true, capture: true });
     document.addEventListener("click", onClick, true);
@@ -114,11 +207,19 @@ export function SiteAudio() {
       document.removeEventListener("pointerdown", onFirstGesture, true);
       document.removeEventListener("click", onClick, true);
     };
-  }, []);
+  }, [ensureAudio, playTone]);
+
+  useEffect(() => {
+    if (lastPathRef.current !== pathname) {
+      const enteringDuel = scene === "duel" && !/\/match\/[^/]+/.test(lastPathRef.current);
+      lastPathRef.current = pathname;
+      if (started) playNavigation(enteringDuel ? "duel" : "page");
+    }
+  }, [pathname, scene, started, playNavigation]);
 
   function toggle(key: keyof AudioPrefs) {
-    setPrefs((current) => ({ ...current, [key]: !current[key] }));
     ensureAudio();
+    setPrefs((current) => ({ ...current, [key]: !current[key] }));
   }
 
   return (
