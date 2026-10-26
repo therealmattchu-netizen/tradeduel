@@ -57,10 +57,15 @@ function getWalletChoices(): WalletChoice[] {
     { name: "Solflare", provider: window.solflare ?? (window.solana?.isSolflare ? window.solana : undefined) },
     { name: "Backpack", provider: (window.backpack && "solana" in window.backpack ? window.backpack.solana : window.backpack as SolanaWalletProvider | undefined) ?? (window.solana?.isBackpack ? window.solana : undefined) },
     { name: "Glow", provider: window.glow ?? (window.solana?.isGlow ? window.solana : undefined) },
-    { name: "Other Solana wallet", provider: window.solana },
   ];
+  const seenProviders: SolanaWalletProvider[] = [];
   for (const candidate of candidates) {
-    if (candidate.provider && !choices.some((item) => item.name.toLowerCase() === candidate.name.toLowerCase())) choices.push({ name: candidate.name, provider: candidate.provider });
+    const provider = candidate.provider;
+    if (!provider?.connect || !provider.signMessage) continue;
+    if (seenProviders.includes(provider)) continue;
+    if (choices.some((item) => item.name.toLowerCase() === candidate.name.toLowerCase())) continue;
+    seenProviders.push(provider);
+    choices.push({ name: candidate.name, provider });
   }
   for (const wallet of discoverStandardWallets()) {
     if (wallet.features["standard:connect"] && wallet.features["solana:signMessage"] && !choices.some((item) => item.name.toLowerCase() === wallet.name.toLowerCase())) choices.push({ name: wallet.name, standardWallet: wallet });
