@@ -981,6 +981,90 @@ export const reconcileMatchSettlement = createServerFn({ method: "POST" }).valid
 });
 
 
+/** Reconciles custom-room team PnL from timestamped historical portfolio snapshots.
+ * This deliberately fails closed: team averages are not marked verified while any member's
+ * indexing, historical pricing, boundary, transfer, lifecycle, or activity evidence is unresolved. */
+export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const match = await DB.prepare("SELECT id,status,mode,started_at,ends_at,max_players FROM td_custom_matches WHERE id=?")
+      .bind(data.matchId).first<{id:string;status:string;mode:string;started_at:string|null;ends_at:string|null;max_players:number}>();
+    if (!match) throw new Error("Custom match not found.");
+    const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,wallet")
+      .bind(match.id).all<{wallet:string;team_number:number}>();
+    const roster = members.results ?? [];
+    if (!roster.some(m=>m.wallet===wallet)) throw new Error("Only room members can reconcile this match.");
+    const blockers:string[]=[];
+    if (match.status!=="completed" || !match.ends_at || new Date(match.ends_at).getTime()>Date.now()) blockers.push("match_not_expired");
+    if (roster.length!==match.max_players) blockers.push("incomplete_roster");
+    if (!match.started_at || !match.ends_at) blockers.push("match_boundaries_missing");
+    const snapshots = await DB.prepare("SELECT wallet,phase,observed_at,sol_balance,token_balances_json FROM td_match_valuations WHERE match_id=? AND phase IN ('start','end')")
+      .bind(match.id).all<{wallet:string;phase:string;observed_at:number;sol_balance:number;token_balances_json:string}>();
+    const poolCache = new Map<string, GeckoPoolChoice | null>();
+    let quoteLookups=0;
+    for (const snapshot of snapshots.results??[]) {
+      let tokenBalances:Array<{mint:string;amount:number}>=[];
+      try { tokenBalances=JSON.parse(snapshot.token_balances_json) as Array<{mint:string;amount:number}>; } catch { blockers.push("invalid_snapshot_token_balances:"+snapshot.wallet+":"+snapshot.phase); }
+      const mints=[...new Set(["So11111111111111111111111111111111111111112",...tokenBalances.filter(t=>t.amount>0&&typeof t.mint==="string").map(t=>t.mint)])];
+      for(const mint of mints) {
+        const existing=await DB.prepare("SELECT accepted,attempts FROM td_match_historical_price_evidence WHERE match_id=? AND wallet=? AND phase=? AND mint=?")
+          .bind(match.id,snapshot.wallet,snapshot.phase,mint).first<{accepted:number;attempts:number}>();
+        if(existing?.accepted || (existing&&existing.attempts>=3) || quoteLookups>=4) continue;
+        quoteLookups++;
+        const quote=await fetchHistoricalTokenPrice(mint,snapshot.observed_at,poolCache);
+        await DB.prepare("INSERT INTO td_match_historical_price_evidence (match_id,wallet,phase,mint,target_at,candle_at,price_usd,liquidity_usd,pool_address,source,accepted,attempts,reason) VALUES (?,?,?,?,?,?,?,?,?,'geckoterminal_ohlcv',?,?,?) ON CONFLICT(match_id,wallet,phase,mint) DO UPDATE SET target_at=excluded.target_at,candle_at=excluded.candle_at,price_usd=excluded.price_usd,liquidity_usd=excluded.liquidity_usd,pool_address=excluded.pool_address,source=excluded.source,accepted=excluded.accepted,attempts=td_match_historical_price_evidence.attempts+1,reason=excluded.reason")
+          .bind(match.id,snapshot.wallet,snapshot.phase,mint,snapshot.observed_at,quote.candleAt,quote.priceUsd,quote.liquidityUsd,quote.poolAddress,quote.priceUsd!==null?1:0,(existing?.attempts??0)+1,quote.reason).run();
+      }
+      const evidence=await DB.prepare("SELECT mint,price_usd,accepted FROM td_match_historical_price_evidence WHERE match_id=? AND wallet=? AND phase=?")
+        .bind(match.id,snapshot.wallet,snapshot.phase).all<{mint:string;price_usd:number|null;accepted:number}>();
+      const prices=new Map((evidence.results??[]).filter(e=>e.accepted&&e.price_usd!==null&&Number.isFinite(e.price_usd)&&e.price_usd>0).map(e=>[e.mint,e.price_usd!]));
+      const solMint="So11111111111111111111111111111111111111112";
+      const unpriced=tokenBalances.filter(t=>t.amount>0&&!prices.has(t.mint)).length+(prices.has(solMint)?0:1);
+      const complete=unpriced===0&&tokenBalances.length<=29&&Number.isFinite(snapshot.sol_balance)&&snapshot.sol_balance>=0;
+      const value=complete?snapshot.sol_balance*prices.get(solMint)!+tokenBalances.filter(t=>t.amount>0).reduce((sum,t)=>sum+t.amount*prices.get(t.mint)!,0):null;
+      const note=complete?"Historical candle revaluation of captured portfolio; not execution-fill PnL.":"Historical pricing incomplete or snapshot coverage cap exceeded.";
+      await DB.prepare("INSERT INTO td_match_historical_valuations (match_id,wallet,phase,observed_at,portfolio_usd,priced_mints,unpriced_mints,complete,integrity_note,updated_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(match_id,wallet,phase) DO UPDATE SET observed_at=excluded.observed_at,portfolio_usd=excluded.portfolio_usd,priced_mints=excluded.priced_mints,unpriced_mints=excluded.unpriced_mints,complete=excluded.complete,integrity_note=excluded.integrity_note,updated_at=datetime('now')")
+        .bind(match.id,snapshot.wallet,snapshot.phase,snapshot.observed_at,value,prices.size,unpriced,complete?1:0,note).run();
+    }
+    const hist=await DB.prepare("SELECT wallet,phase,observed_at,portfolio_usd,complete,unpriced_mints FROM td_match_historical_valuations WHERE match_id=?").bind(match.id)
+      .all<{wallet:string;phase:string;observed_at:number;portfolio_usd:number|null;complete:number;unpriced_mints:number}>();
+    const rows=hist.results??[];
+    const returns:Array<{wallet:string;team:number;startUsd:number|null;endUsd:number|null;returnPct:number|null}>=[];
+    for(const member of roster) {
+      const start=rows.find(r=>r.wallet===member.wallet&&r.phase==="start");
+      const end=rows.find(r=>r.wallet===member.wallet&&r.phase==="end");
+      for(const [phase,row] of [["start",start],["end",end]] as const) {
+        if(!row||!row.complete||row.portfolio_usd===null) blockers.push("missing_or_incomplete_snapshot:"+member.wallet+":"+phase);
+        const boundary=phase==="start"?match.started_at:match.ends_at;
+        if(row&&boundary&&Math.abs(row.observed_at-Math.floor(new Date(boundary).getTime()/1000))>120) blockers.push("snapshot_outside_120_second_boundary:"+member.wallet+":"+phase);
+      }
+      const pct=start?.complete&&end?.complete&&start.portfolio_usd!==null&&end.portfolio_usd!==null&&start.portfolio_usd>0?((end.portfolio_usd-start.portfolio_usd)/start.portfolio_usd)*100:null;
+      returns.push({wallet:member.wallet,team:member.team_number,startUsd:start?.portfolio_usd??null,endUsd:end?.portfolio_usd??null,returnPct:pct});
+      const index=await DB.prepare("SELECT exhausted FROM td_match_index_state WHERE match_id=? AND wallet=?").bind(match.id,member.wallet).first<{exhausted:number}>();
+      if(!index||index.exhausted!==1) blockers.push("transaction_history_not_fully_indexed:"+member.wallet);
+    }
+    const failed=await DB.prepare("SELECT COUNT(*) AS count FROM td_match_accounting_ledger WHERE match_id=? AND success=0").bind(match.id).first<{count:number}>();
+    if((failed?.count??0)>0) blockers.push("failed_transactions_in_match_window");
+    const ambiguous=await DB.prepare("SELECT COUNT(*) AS count FROM td_match_events WHERE match_id=? AND success=1 AND event_type IN ('token_activity','sol_activity','pump_fun_instruction_unclassified')").bind(match.id).first<{count:number}>();
+    if((ambiguous?.count??0)>0) blockers.push("unclassified_wallet_activity");
+    const flows=await DB.prepare("SELECT classification,COUNT(*) AS count FROM td_match_instruction_evidence WHERE match_id=? AND classification IN ('external_sol_inflow_candidate','external_sol_outflow_candidate','external_token_inflow_candidate','external_token_outflow_candidate') GROUP BY classification").bind(match.id).all<{classification:string;count:number}>();
+    for(const flow of flows.results??[]) if(flow.count>0) blockers.push("external_flow_requires_reconciliation:"+flow.classification);
+    const lifecycle=await DB.prepare("SELECT COUNT(*) AS count FROM td_match_instruction_evidence WHERE match_id=? AND classification='token_account_lifecycle'").bind(match.id).first<{count:number}>();
+    if((lifecycle?.count??0)>0) blockers.push("token_account_rent_or_lifecycle_effects_unresolved");
+    const prices=await DB.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN accepted=0 THEN 1 ELSE 0 END) AS rejected FROM td_match_historical_price_evidence WHERE match_id=?").bind(match.id).first<{total:number;rejected:number|null}>();
+    if(!prices?.total) blockers.push("historical_price_source_provenance_missing");
+    if((prices?.rejected??0)>0) blockers.push("one_or_more_historical_price_quotes_failed_quality_checks");
+    const teamScore=(team:number)=>{const values=returns.filter(r=>r.team===team);return values.length>0&&values.every(r=>r.returnPct!==null)?values.reduce((sum,r)=>sum+(r.returnPct??0),0)/values.length:null;};
+    const teamOne=teamScore(1),teamTwo=teamScore(2);
+    const status=blockers.length?"review_required":"verified";
+    const unique=[...new Set(blockers)];
+    const txCount=await DB.prepare("SELECT COUNT(*) AS count FROM td_match_accounting_ledger WHERE match_id=?").bind(match.id).first<{count:number}>();
+    await DB.prepare("INSERT INTO td_custom_match_settlements (match_id,status,team_one_return_pct,team_two_return_pct,member_returns_json,blockers_json,indexed_transactions,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET status=excluded.status,team_one_return_pct=excluded.team_one_return_pct,team_two_return_pct=excluded.team_two_return_pct,member_returns_json=excluded.member_returns_json,blockers_json=excluded.blockers_json,indexed_transactions=excluded.indexed_transactions,updated_at=datetime('now')")
+      .bind(match.id,status,teamOne,teamTwo,JSON.stringify(returns),JSON.stringify(unique),txCount?.count??0).run();
+    return {matchId:match.id,status,teamOneReturnPct:teamOne,teamTwoReturnPct:teamTwo,members:returns,blockers:unique,priceLookupsThisRun:quoteLookups,indexedTransactions:txCount?.count??0,eloApplied:false,message:status==="verified"?"All team members passed the configured historical portfolio reconciliation checks.":"Team scores remain unverified until all historical prices, snapshots, transaction history, transfers, and lifecycle effects are reconciled."};
+  });
+
 /** Returns chat messages only to a verified participant in this match. */
 export const getMatchChatMessages = createServerFn({ method: "GET" })
   .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid(), afterId: z.number().int().min(0).optional() }))
