@@ -56,9 +56,11 @@ function getWalletChoices(): WalletChoice[] {
   // In particular, never use window.solana as a Phantom fallback: another
   // extension can own that shared namespace and open the wrong wallet.
   const candidates: Array<{ name: string; provider?: SolanaWalletProvider }> = [
-    { name: "Phantom", provider: window.phantom?.solana?.isPhantom ? window.phantom.solana : undefined },
-    { name: "Solflare", provider: window.solflare?.isSolflare ? window.solflare : undefined },
-    { name: "Backpack", provider: (window.backpack && "solana" in window.backpack && (window.backpack.solana as SolanaWalletProvider | undefined)?.isBackpack ? window.backpack.solana as SolanaWalletProvider : (window.backpack as SolanaWalletProvider | undefined)?.isBackpack ? window.backpack as SolanaWalletProvider : undefined) },
+    // The wallet-specific namespace is the identity boundary. Do not require
+    // an optional isPhantom flag: some compatible Phantom builds omit it.
+    { name: "Phantom", provider: window.phantom?.solana },
+    { name: "Solflare", provider: window.solflare },
+    { name: "Backpack", provider: (window.backpack && "solana" in window.backpack ? window.backpack.solana as SolanaWalletProvider | undefined : window.backpack as SolanaWalletProvider | undefined) },
   ];
   for (const candidate of candidates) {
     const provider = candidate.provider;
@@ -74,11 +76,16 @@ function getWalletChoices(): WalletChoice[] {
   for (const wallet of discoverStandardWallets()) {
     const name = wallet.name.trim();
     if (!name || !wallet.features["standard:connect"] || !wallet.features["solana:signMessage"]) continue;
+    // Never let a Wallet Standard registration stand in for Phantom when its
+    // dedicated namespace is missing. A misregistered/stale entry could route
+    // the Phantom-labeled button to another extension.
+    if (name.toLowerCase() === "phantom" && !window.phantom?.solana) continue;
     if (choices.some((item) => item.name.toLowerCase() === name.toLowerCase())) continue;
     choices.push({ name, standardWallet: wallet });
   }
-  // Keep Backpack visible even when the extension is not detected; its fallback
-  // opens the official install page rather than pretending a connection succeeded.
+  // Show explicit install fallbacks rather than routing one wallet's button
+  // through another extension's generic provider.
+  if (!choices.some((item) => item.name.toLowerCase() === "phantom")) choices.push({ name: "Phantom" });
   if (!choices.some((item) => item.name.toLowerCase() === "backpack")) choices.push({ name: "Backpack" });
   return choices;
 }
@@ -216,7 +223,7 @@ export function WalletArena() {
           <button type="button" className="td-text-button" aria-label="Close wallet selector" onClick={() => setWalletPickerOpen(false)}>Close ✕</button>
         </div>
         <p style={{ color: "#b9b5ca", fontSize: "13px", lineHeight: 1.5 }}>Select a detected wallet. TradeDuel asks you to sign a message to verify ownership; it will not send a transaction.</p>
-        {walletChoices.length > 0 ? <div style={{ display: "grid", gap: "8px", marginTop: "16px" }}>{walletChoices.map((choice) => <button type="button" key={choice.name} className="td-secondary-action" style={{ width: "100%", textAlign: "left", padding: "12px 14px" }} onClick={() => { if (!choice.provider && !choice.standardWallet && choice.name === "Backpack") { window.open("https://backpack.app/", "_blank", "noopener,noreferrer"); setNotice("Install Backpack, then return and reload this page to connect it."); return; } void connectWallet(choice); }} disabled={busy}>{choice.name}{!choice.provider && !choice.standardWallet && choice.name === "Backpack" ? " · Install" : ""}<span style={{ float: "right" }}>↗</span></button>)}</div> : <p style={{ fontSize: "13px", color: "#b9b5ca" }}>No compatible wallet was detected in this browser.</p>}
+        {walletChoices.length > 0 ? <div style={{ display: "grid", gap: "8px", marginTop: "16px" }}>{walletChoices.map((choice) => <button type="button" key={choice.name} className="td-secondary-action" style={{ width: "100%", textAlign: "left", padding: "12px 14px" }} onClick={() => { if (!choice.provider && !choice.standardWallet && (choice.name === "Backpack" || choice.name === "Phantom")) { const url = choice.name === "Phantom" ? "https://phantom.app/" : "https://backpack.app/"; window.open(url, "_blank", "noopener,noreferrer"); setNotice(`Install ${choice.name}, then return and reload this page to connect it.`); return; } void connectWallet(choice); }} disabled={busy}>{choice.name}{!choice.provider && !choice.standardWallet && (choice.name === "Backpack" || choice.name === "Phantom") ? " · Install / reload" : ""}<span style={{ float: "right" }}>↗</span></button>)}</div> : <p style={{ fontSize: "13px", color: "#b9b5ca" }}>No compatible wallet was detected in this browser.</p>}
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", marginTop: "18px", paddingTop: "14px" }}>
           <span className="td-mini-label">GET A WALLET</span>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "8px", fontSize: "13px" }}>
