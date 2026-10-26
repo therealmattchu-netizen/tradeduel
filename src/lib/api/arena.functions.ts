@@ -245,6 +245,8 @@ export const getPublicMatches = createServerFn({ method: "GET" }).handler(async 
 const SOLANA_MAINNET_RPCS = [
   "https://api.mainnet-beta.solana.com",
   "https://solana-rpc.publicnode.com",
+  "https://solana.drpc.org",
+  "https://rpc.ankr.com/solana",
 ] as const;
 
 /** Fail over between independent public mainnet RPCs when one is throttled or unavailable. */
@@ -446,7 +448,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
     if (!custom || !member) throw new Error("Match not found for this wallet.");
     const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string;team_number:number}>();
-    if (!custom.started_at || custom.status === "open") return {matchId:custom.id,indexed:0,events:[],accountingLedger:[],valuations:[],valuationObservations:[],fillCandidates:[],priceEvidence:[],status:"waiting_for_players",customRoom:{status:custom.status,startedAt:custom.started_at,endsAt:custom.ends_at,mode:custom.mode,maxPlayers:custom.max_players,members:members.results??[]},note:"Room is waiting for all player slots to fill. The match timer and transaction indexing begin together."};
+    if (!custom.started_at || custom.status === "open") return {matchId:custom.id,indexed:0,events:[],accountingLedger:[],valuations:[],valuationObservations:[],fillCandidates:[],priceEvidence:[],status:"waiting_for_players",customRoom:{status:custom.status,startedAt:custom.started_at,endsAt:custom.ends_at,durationSeconds:custom.duration_seconds,mode:custom.mode,maxPlayers:custom.max_players,members:members.results??[]},note:"Room is waiting for all player slots to fill. The match timer and transaction indexing begin together."};
     participants = [...new Set((members.results??[]).map(row=>row.wallet))];
     match = {id:custom.id,player_one:participants[0]??wallet,player_two:participants[1]??null,status:custom.status,started_at:custom.started_at,ends_at:custom.ends_at,verification_status:"unverified",custom:true,mode:custom.mode,max_players:custom.max_players};
   }
@@ -1157,12 +1159,29 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
         status: currentStatus,
         startedAt,
         endsAt,
+        durationSeconds: match.duration_seconds,
         mode: match.mode,
         maxPlayers: match.max_players,
         members: currentMembers,
       },
       team: member.team_number,
     };
+  });
+
+export const surrenderCustomMatch = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    const member = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?")
+      .bind(data.matchId, wallet).first<{team_number:number}>();
+    if (!member) throw new Error("You must be in this match to surrender.");
+    const room = await DB.prepare("SELECT status,mode FROM td_custom_matches WHERE id=?")
+      .bind(data.matchId).first<{status:string;mode:string}>();
+    if (!room) throw new Error("Match not found.");
+    if (room.status !== "active") throw new Error("Only an active match can be surrendered.");
+    await DB.prepare("UPDATE td_custom_matches SET status='completed',ends_at=COALESCE(ends_at,datetime('now')) WHERE id=? AND status='active'")
+      .bind(data.matchId).run();
+    return { ok: true, status: "completed", surrenderedBy: wallet };
   });
 
 export const createCustomMatch = createServerFn({ method: "POST" })
