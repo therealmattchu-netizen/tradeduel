@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "tradeduel",
-  "main": "@tanstack/react-start/server-entry",
+  "main": "./dist/server/server.js",
   "compatibility_date": "2026-10-25",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
