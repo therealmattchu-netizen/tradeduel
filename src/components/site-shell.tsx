@@ -21,7 +21,7 @@ export function SiteShell({ children, active }: { children: ReactNode; active?: 
       </nav>
     </header>
     <div className="td-inner-content">{children}</div>
-    <footer className="td-footer"><Link className="td-brand" to="/"><span className="td-mark"><SwordsMark size={27} /></span><span>TRADEDUEL</span></Link><p>Competitive trading arena. In development.</p><span className="td-footer-note">NOT FINANCIAL ADVICE. CRYPTO TRADING INVOLVES RISK.</span></footer>
+    <footer className="td-footer"><Link className="td-brand" to="/"><span className="td-mark"><SwordsMark size={27} /></span><span>TRADEDUEL</span></Link><p>Competitive trading arena. Built around transparent rules.</p><span className="td-footer-note">NOT FINANCIAL ADVICE. CRYPTO TRADING INVOLVES RISK.</span></footer>
   </main>;
 }
 
