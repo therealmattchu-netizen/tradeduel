@@ -18,8 +18,6 @@ import { reportApplicationError } from "../lib/error-reporting";
 // Editing it via the app settings UI rewrites this file and redeploys the app.
 import appMetaJson from "../app-meta.json";
 
-declare const __HF_DESIGN_INSPECTOR__: boolean;
-
 // Built-in defaults for any field that isn't set in app-meta.json.
 const DEFAULT_TITLE = "TradeDuel | The Trading Arena";
 const DEFAULT_DESCRIPTION = "A competitive Pump.fun trading arena in development. Head-to-head challenges, wallet-owned trades, and transparent scoring.";
@@ -184,25 +182,6 @@ function RootComponent() {
 
   // Temporary public maintenance mode. Set to false to restore the full site.
   const SITE_MAINTENANCE = false;
-
-  useEffect(() => {
-    if (!__HF_DESIGN_INSPECTOR__) {
-      return;
-    }
-
-    void import("../module/design-inspector/runtime")
-      .then(({ installHiggsfieldDesignInspector }) => {
-        installHiggsfieldDesignInspector();
-      })
-      .catch((error) => {
-        reportApplicationError(
-          error instanceof Error ? error : new Error("Failed to load design inspector"),
-          {
-            boundary: "higgsfield_design_inspector_import",
-          },
-        );
-      });
-  }, []);
 
   if (SITE_MAINTENANCE) {
     return (
