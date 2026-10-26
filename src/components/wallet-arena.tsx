@@ -223,7 +223,27 @@ export function WalletArena() {
           <button type="button" className="td-text-button" aria-label="Close wallet selector" onClick={() => setWalletPickerOpen(false)}>Close ✕</button>
         </div>
         <p style={{ color: "#b9b5ca", fontSize: "13px", lineHeight: 1.5 }}>Select a detected wallet. TradeDuel asks you to sign a message to verify ownership; it will not send a transaction.</p>
-        {walletChoices.length > 0 ? <div style={{ display: "grid", gap: "8px", marginTop: "16px" }}>{walletChoices.map((choice) => <button type="button" key={choice.name} className="td-secondary-action" style={{ width: "100%", textAlign: "left", padding: "12px 14px" }} onClick={() => { if (!choice.provider && !choice.standardWallet && (choice.name === "Backpack" || choice.name === "Phantom")) { const url = choice.name === "Phantom" ? "https://phantom.app/" : "https://backpack.app/"; window.open(url, "_blank", "noopener,noreferrer"); setNotice(`Install ${choice.name}, then return and reload this page to connect it.`); return; } void connectWallet(choice); }} disabled={busy}>{choice.name}{!choice.provider && !choice.standardWallet && (choice.name === "Backpack" || choice.name === "Phantom") ? " · Install / reload" : ""}<span style={{ float: "right" }}>↗</span></button>)}</div> : <p style={{ fontSize: "13px", color: "#b9b5ca" }}>No compatible wallet was detected in this browser.</p>}
+        {walletChoices.length > 0 ? <div style={{ display: "grid", gap: "8px", marginTop: "16px" }}>{walletChoices.map((choice) => <button type="button" key={choice.name} className="td-secondary-action" style={{ width: "100%", textAlign: "left", padding: "12px 14px" }} onClick={() => {
+          // Resolve Phantom at click time from Phantom's own namespace. Never use
+          // a cached choice or Wallet Standard entry for this button; those can
+          // be supplied/misidentified by another extension.
+          if (choice.name === "Phantom") {
+            const phantomProvider = window.phantom?.solana;
+            if (phantomProvider?.connect && phantomProvider.signMessage && !phantomProvider.isBackpack) {
+              void connectWallet({ name: "Phantom", provider: phantomProvider });
+              return;
+            }
+            window.open("https://phantom.app/", "_blank", "noopener,noreferrer");
+            setNotice("Phantom's dedicated browser extension provider was not detected. Install or enable Phantom, then reload TradeDuel. TradeDuel will not route this button through Backpack.");
+            return;
+          }
+          if (!choice.provider && !choice.standardWallet && choice.name === "Backpack") {
+            window.open("https://backpack.app/", "_blank", "noopener,noreferrer");
+            setNotice("Install Backpack, then return and reload this page to connect it.");
+            return;
+          }
+          void connectWallet(choice);
+        }} disabled={busy}>{choice.name}{!choice.provider && !choice.standardWallet && (choice.name === "Backpack" || choice.name === "Phantom") ? " · Install / reload" : ""}<span style={{ float: "right" }}>↗</span></button>)}</div> : <p style={{ fontSize: "13px", color: "#b9b5ca" }}>No compatible wallet was detected in this browser.</p>}
         <div style={{ borderTop: "1px solid rgba(255,255,255,0.1)", marginTop: "18px", paddingTop: "14px" }}>
           <span className="td-mini-label">GET A WALLET</span>
           <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginTop: "8px", fontSize: "13px" }}>
