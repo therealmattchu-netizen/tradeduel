@@ -6,7 +6,7 @@ test("restricts embedded frames to the same origin and preserves the response", 
   expect(response.status).toBe(201);
   expect(await response.text()).toBe("ok");
   expect(response.headers.get("content-security-policy")).toContain(
-    "frame-src 'self' https://auth.higgsfield.app https://auth.higgsfield-dev.app;",
+    "frame-src 'self';",
   );
   expect(response.headers.get("content-security-policy")).not.toContain("frame-ancestors");
 });
