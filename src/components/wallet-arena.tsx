@@ -165,7 +165,7 @@ export function WalletArena() {
         signature = signed instanceof Uint8Array ? signed : signed.signature;
         const verified = await verifyWalletChallenge({ data: { wallet: publicKey, nonce: challenge.nonce, signature: toBase64(signature) } });
         window.sessionStorage.setItem(TOKEN_KEY, verified.token); window.sessionStorage.setItem(WALLET_KEY, verified.wallet);
-        setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(choice.name); setNotice("Wallet ownership verified. No transaction was sent.");
+        setToken(verified.token); setWallet(verified.wallet); setWalletProviderName(choice.name); window.dispatchEvent(new CustomEvent("tradeduel:wallet-session")); setNotice("Wallet ownership verified. No transaction was sent.");
         setWalletPickerOpen(false);
         return;
       }
@@ -197,6 +197,7 @@ export function WalletArena() {
   const disconnect = async () => {
     // Clear the TradeDuel session locally. The selected provider may be a Wallet Standard wallet.
     window.sessionStorage.removeItem(TOKEN_KEY); window.sessionStorage.removeItem(WALLET_KEY);
+    window.dispatchEvent(new CustomEvent("tradeduel:wallet-session"));
     setWallet(""); setToken(""); setWalletProviderName(""); setRating(null); setQueueStatus("idle"); setMatches([]); setNotice("Disconnected. Your wallet remains under your control.");
   };
 
