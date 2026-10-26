@@ -295,13 +295,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   const { DB, wallet } = await requireSession(data.token);
   const match = await DB.prepare("SELECT id, player_one, player_two, status, started_at, ends_at, verification_status FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(data.matchId, wallet, wallet).first<{id:string;player_one:string;player_two:string|null;status:string;started_at:string|null;ends_at:string|null;verification_status:string}>();
   if (!match) throw new Error("Match not found for this wallet.");
-  const rpc = "https://api.mainnet-beta.solana.com";
-  const rpcCall = async (method:string, params:unknown[]) => {
-    const res = await fetch(rpc,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})});
-    if(!res.ok) throw new Error("Solana RPC is temporarily unavailable.");
-    const body=await res.json() as {result?:any;error?:{message?:string}};
-    if(body.error) throw new Error(body.error.message||"Solana RPC error."); return body.result;
-  };
+  const rpcCall = async (method:string, params:unknown[]): Promise<any> => await solanaRpcCall(method, params) as any;
   const start = match.started_at ? Math.floor(new Date(match.started_at).getTime()/1000) : 0;
   const end = match.ends_at ? Math.floor(new Date(match.ends_at).getTime()/1000) : Math.floor(Date.now()/1000);
   let indexed = 0;
@@ -556,14 +550,7 @@ export const verifyMatchTrades = createServerFn({ method: "POST" }).validator(z.
   if (!match.started_at || !match.ends_at) throw new Error("Match has no authoritative time window.");
   const start = Math.floor(new Date(match.started_at).getTime()/1000), end = Math.floor(new Date(match.ends_at).getTime()/1000);
   if (!Number.isFinite(start)||!Number.isFinite(end)||end<=start) throw new Error("Match time window is invalid.");
-  const rpc = "https://api.mainnet-beta.solana.com";
-  const rpcCall = async (method:string, params:unknown[]) => {
-    const response = await fetch(rpc,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({jsonrpc:"2.0",id:1,method,params})});
-    if (!response.ok) throw new Error("Solana RPC is temporarily unavailable.");
-    const body = await response.json() as {result?:any;error?:{message?:string}};
-    if(body.error) throw new Error(body.error.message||"Solana RPC error.");
-    return body.result;
-  };
+  const rpcCall = async (method:string, params:unknown[]): Promise<any> => await solanaRpcCall(method, params) as any;
   let scanned = 0, saved = 0;
   for (const player of [match.player_one,match.player_two]) {
     const queuedSignatures = await DB.prepare("SELECT signature,slot,block_time,tx_error_json FROM td_match_index_queue WHERE match_id=? AND wallet=? AND block_time>=? AND block_time<=? ORDER BY block_time DESC LIMIT 5000")
