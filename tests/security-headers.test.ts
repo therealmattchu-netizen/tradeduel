@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { applySecurityHeaders } from "../src/lib/security-headers.server";
 
-test("allows the host approval iframe and preserves the response", async () => {
+test("restricts embedded frames to the same origin and preserves the response", async () => {
   const response = applySecurityHeaders(new Response("ok", { status: 201 }));
   expect(response.status).toBe(201);
   expect(await response.text()).toBe("ok");
