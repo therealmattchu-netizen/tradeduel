@@ -327,12 +327,15 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       const keys=(tx.transaction?.message?.accountKeys??[]).map((k:any)=>typeof k==="string"?k:k.pubkey);
       const walletIndex=keys.indexOf(wallet);
       if(walletIndex<0) continue;
-      const deltas=new Map<string,number>();
-      for(const b of tx.meta.preTokenBalances??[]) if(b.owner===wallet&&b.mint) deltas.set(b.mint,-Number(b.uiTokenAmount?.uiAmount??0));
-      for(const b of tx.meta.postTokenBalances??[]) if(b.owner===wallet&&b.mint) deltas.set(b.mint,(deltas.get(b.mint)??0)+Number(b.uiTokenAmount?.uiAmount??0));
+      const preByMint=new Map<string,number>(); const postByMint=new Map<string,number>();
+      for(const b of tx.meta.preTokenBalances??[]) if(b.owner===wallet&&b.mint) preByMint.set(b.mint,(preByMint.get(b.mint)??0)+Number(b.uiTokenAmount?.uiAmount??0));
+      for(const b of tx.meta.postTokenBalances??[]) if(b.owner===wallet&&b.mint) postByMint.set(b.mint,(postByMint.get(b.mint)??0)+Number(b.uiTokenAmount?.uiAmount??0));
+      const deltas=new Map<string,number>(); for(const mint of new Set([...preByMint.keys(),...postByMint.keys()])) deltas.set(mint,(postByMint.get(mint)??0)-(preByMint.get(mint)??0));
       const programIds: string[]=[...new Set<string>((tx.transaction?.message?.instructions??[]).map((ix:any)=>String(ix.programId??"")).filter((id:string)=>Boolean(id)))];
       for(const inner of tx.meta.innerInstructions??[]) for(const ix of inner.instructions??[]) if(ix.programId) programIds.push(String(ix.programId));
-      for(const [mint,amount] of deltas) if(Number.isFinite(amount)&&Math.abs(amount)>1e-10) tradeActivity.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,direction:amount>0?"inflow_candidate":"outflow_candidate",programIds:[...new Set<string>(programIds)]});
+      const preLamports=Number(tx.meta.preBalances?.[walletIndex]??0); const postLamports=Number(tx.meta.postBalances?.[walletIndex]??0); const feeLamports=walletIndex===0?Number(tx.meta.fee??0):0; const solSpent=Math.max(0,(preLamports-postLamports-feeLamports)/1e9);
+      const looksLikeSwap=programIds.some((id:string)=>/JUP|whirLb|675kPX9MHTjS2zt1qfr1NYHuzefy|pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA|6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P/i.test(id));
+      for(const [mint,amount] of deltas) if(Number.isFinite(amount)&&Math.abs(amount)>1e-10){ tradeActivity.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,direction:amount>0?"inflow_candidate":"outflow_candidate",programIds:[...new Set<string>(programIds)]}); if(amount>0&&solSpent>0&&looksLikeSwap)buyCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,solSpent}); }
     }
     const mints=[...holdings.keys()].slice(0,30);
     const prices=new Map<string,{priceUsd:number|null;liquidityUsd:number|null;pairUrl:string|null}>();
