@@ -52,23 +52,31 @@ function getWalletChoices(): WalletChoice[] {
   const choices: WalletChoice[] = [];
   const seenProviders: SolanaWalletProvider[] = [];
 
-  // Prefer Wallet Standard entries matched by their registered wallet name.
-  // This prevents a generic injected window.solana object from being mislabeled
-  // as Phantom when another extension (for example Backpack) owns that object.
+  // Bind legacy provider buttons to their wallet-specific namespaces first.
+  // In particular, never use window.solana as a Phantom fallback: another
+  // extension can own that shared namespace and open the wrong wallet.
+  const candidates: Array<{ name: string; provider?: SolanaWalletProvider }> = [
+    { name: "Phantom", provider: window.phantom?.solana?.isPhantom ? window.phantom.solana : undefined },
+    { name: "Solflare", provider: window.solflare?.isSolflare ? window.solflare : undefined },
+    { name: "Backpack", provider: (window.backpack && "solana" in window.backpack && (window.backpack.solana as SolanaWalletProvider | undefined)?.isBackpack ? window.backpack.solana as SolanaWalletProvider : (window.backpack as SolanaWalletProvider | undefined)?.isBackpack ? window.backpack as SolanaWalletProvider : undefined) },
+  ];
+  for (const candidate of candidates) {
+    const provider = candidate.provider;
+    if (!provider?.connect || !provider.signMessage) continue;
+    if (seenProviders.includes(provider)) continue;
+    seenProviders.push(provider);
+    choices.push({ name: candidate.name, provider });
+  }
+
+  // Wallet Standard entries are the fallback for wallets without an identified
+  // wallet-specific legacy namespace. Match by their registered names and never
+  // overwrite the explicit Phantom provider above.
   for (const wallet of discoverStandardWallets()) {
     const name = wallet.name.trim();
     if (!name || !wallet.features["standard:connect"] || !wallet.features["solana:signMessage"]) continue;
     if (choices.some((item) => item.name.toLowerCase() === name.toLowerCase())) continue;
     choices.push({ name, standardWallet: wallet });
   }
-
-  // Only accept injected providers that positively identify themselves as the
-  // wallet being displayed. Namespaces alone are not enough to establish identity.
-  const candidates: Array<{ name: string; provider?: SolanaWalletProvider }> = [
-    { name: "Phantom", provider: window.phantom?.solana?.isPhantom ? window.phantom.solana : (window.solana?.isPhantom ? window.solana : undefined) },
-    { name: "Solflare", provider: window.solflare?.isSolflare ? window.solflare : (window.solana?.isSolflare ? window.solana : undefined) },
-    { name: "Backpack", provider: (window.backpack && "solana" in window.backpack && (window.backpack.solana as SolanaWalletProvider | undefined)?.isBackpack ? window.backpack.solana as SolanaWalletProvider : (window.backpack as SolanaWalletProvider | undefined)?.isBackpack ? window.backpack as SolanaWalletProvider : window.solana?.isBackpack ? window.solana : undefined) },
-  ];
   for (const candidate of candidates) {
     const provider = candidate.provider;
     if (!provider?.connect || !provider.signMessage) continue;
