@@ -311,11 +311,28 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       }
     }
     const signatures = signatureResult;
+    // Keep indexing history one page at a time per request. Recent signatures are
+    // always refreshed; the durable cursor lets repeated lookups progressively walk
+    // backwards through the wallet's full available RPC history.
+    const indexState = await DB.prepare("SELECT before_signature,exhausted FROM td_wallet_index_state WHERE wallet=?").bind(wallet).first<{before_signature:string|null;exhausted:number}>();
+    let historyPage: typeof signatures = [];
+    if (!indexState || !indexState.exhausted) {
+      try {
+        const options: Record<string,unknown> = {limit:100,commitment:"confirmed"};
+        if (indexState?.before_signature) options.before = indexState.before_signature;
+        historyPage = await call("getSignaturesForAddress",[wallet,options]) as typeof signatures;
+        const nextCursor = historyPage.length ? historyPage[historyPage.length-1].signature : (indexState?.before_signature ?? null);
+        const exhausted = historyPage.length === 0 || historyPage.length < 100;
+        await DB.prepare("INSERT INTO td_wallet_index_state (wallet,before_signature,exhausted,pages_fetched,last_checked_at) VALUES (?,?,?,1,datetime('now')) ON CONFLICT(wallet) DO UPDATE SET before_signature=excluded.before_signature,exhausted=excluded.exhausted,pages_fetched=td_wallet_index_state.pages_fetched+1,last_checked_at=datetime('now')").bind(wallet,nextCursor,exhausted?1:0).run();
+      } catch {/* The next lookup retries history discovery. */}
+    }
+    const scanSignatures = [...new Map([...signatures,...historyPage].map(sig=>[sig.signature,sig])).values()];
     const tradeActivity: Array<{signature:string;blockTime:number|null;mint:string;amount:number;direction:"inflow_candidate"|"outflow_candidate";programIds:string[]}> = [];
     const buyCandidates: Array<{signature:string;blockTime:number|null;mint:string;amount:number;quoteAsset:"SOL"|"USDC";quoteAmount:number;estimatedCostUsd:number|null}> = [];
-    // Inspect a bounded recent window for wallet token balance changes. These are
-    // activity candidates; transfers, airdrops, LP actions, and swaps can look alike.
-    const txResults = await Promise.all(signatures.slice(0,12).map(async sig => {
+    const sellCandidates: Array<{signature:string;blockTime:number|null;mint:string;amount:number;quoteAsset:"SOL"|"USDC";quoteAmount:number;estimatedProceedsUsd:number|null}> = [];
+    // Inspect recent and newly indexed historical transactions. Events remain candidates
+    // because transfers, liquidity operations, and multi-leg swaps can resemble trades.
+    const txResults = await Promise.all(scanSignatures.map(async sig => {
       if (sig.err !== null) return null;
       try {
         return { sig, tx: await call("getTransaction", [sig.signature, { encoding:"jsonParsed", commitment:"confirmed", maxSupportedTransactionVersion:0 }]) as any };
@@ -338,12 +355,20 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       const usdcMint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
       const usdcDelta=deltas.get(usdcMint)??0;
       const usdcSpent=Math.max(0,-usdcDelta);
-      const looksLikeSwap=programIds.some((id:string)=>/JUP|whirLb|675kPX9MHTjS2zt1qfr1NYHuzefy|pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA|6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P/i.test(id));
+      const usdcReceived=Math.max(0,usdcDelta);
+      const solReceived=Math.max(0,(postLamports-preLamports+feeLamports)/1e9);
+      const knownSwapPrograms = new Set(["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4","JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB","whirLbMiicVdio4qvUfM5KAg6Ct3Vq1P6gP1XJ6","675kPX9MHTjS2zt1qfr1NYHuzefyq8","pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA","6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"]);
+      const looksLikeSwap=programIds.some((id:string)=>knownSwapPrograms.has(id)||/JUP|whirLb/i.test(id));
       for(const [mint,amount] of deltas) if(Number.isFinite(amount)&&Math.abs(amount)>1e-10){
         tradeActivity.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,direction:amount>0?"inflow_candidate":"outflow_candidate",programIds:[...new Set<string>(programIds)]});
-        if(amount>0&&looksLikeSwap&&mint!==usdcMint){
-          if(usdcSpent>0) buyCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,quoteAsset:"USDC",quoteAmount:usdcSpent,estimatedCostUsd:usdcSpent});
-          else if(solSpent>0) buyCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,quoteAsset:"SOL",quoteAmount:solSpent,estimatedCostUsd:null});
+        if(looksLikeSwap&&mint!==usdcMint){
+          if(amount>0){
+            if(usdcSpent>0) buyCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,quoteAsset:"USDC",quoteAmount:usdcSpent,estimatedCostUsd:usdcSpent});
+            else if(solSpent>0) buyCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount,quoteAsset:"SOL",quoteAmount:solSpent,estimatedCostUsd:null});
+          } else if(amount<0){
+            if(usdcReceived>0) sellCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount:Math.abs(amount),quoteAsset:"USDC",quoteAmount:usdcReceived,estimatedProceedsUsd:usdcReceived});
+            else if(solReceived>0) sellCandidates.push({signature:item.sig.signature,blockTime:item.sig.blockTime,mint,amount:Math.abs(amount),quoteAsset:"SOL",quoteAmount:solReceived,estimatedProceedsUsd:null});
+          }
         }
       }
     }
@@ -366,14 +391,18 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
     let solPriceUsd:number|null=null;
     try{const sr=await fetch("https://api.dexscreener.com/tokens/v1/solana/So11111111111111111111111111111111111111112",{headers:{accept:"application/json"},signal:AbortSignal.timeout(4000)});if(sr.ok){const sp=await sr.json() as Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number}}>;const best=(sp??[]).filter(p=>p.baseToken?.address==="So11111111111111111111111111111111111111112"&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];if(best)solPriceUsd=Number(best.priceUsd);}}catch{}
     for(const buy of buyCandidates){try{const costUsd=buy.estimatedCostUsd??(solPriceUsd===null?null:buy.quoteAmount*solPriceUsd);await DB.prepare("INSERT OR IGNORE INTO td_wallet_token_buys (wallet,mint,signature,block_time,token_amount,sol_spent,estimated_cost_usd,sol_price_usd,source,quote_asset,quote_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(wallet,buy.mint,buy.signature,buy.blockTime,buy.amount,buy.quoteAsset==="SOL"?buy.quoteAmount:0,costUsd,solPriceUsd,buy.quoteAsset==="USDC"?"usdc_outflow_plus_swap_program_candidate":"sol_outflow_plus_swap_program_candidate",buy.quoteAsset,buy.quoteAmount).run();}catch{}}
+    for(const sell of sellCandidates){try{const proceedsUsd=sell.estimatedProceedsUsd??(solPriceUsd===null?null:sell.quoteAmount*solPriceUsd);await DB.prepare("INSERT OR IGNORE INTO td_wallet_token_sells (wallet,mint,signature,block_time,token_amount,quote_asset,quote_amount,estimated_proceeds_usd,source) VALUES (?,?,?,?,?,?,?,?,?)").bind(wallet,sell.mint,sell.signature,sell.blockTime,sell.amount,sell.quoteAsset,sell.quoteAmount,proceedsUsd,sell.quoteAsset==="USDC"?"usdc_inflow_plus_swap_program_candidate":"sol_inflow_plus_swap_program_candidate").run();}catch{}}
     const positions=[...holdings.values()].map(h=>({mint:h.mint,amount:h.amount,priceUsd:prices.get(h.mint)?.priceUsd??null,valueUsd:prices.has(h.mint)?h.amount*prices.get(h.mint)!.priceUsd!:null,liquidityUsd:prices.get(h.mint)?.liquidityUsd??null,pairUrl:prices.get(h.mint)?.pairUrl??null,programs:[...h.programs]})).sort((a,b)=>(b.valueUsd??-1)-(a.valueUsd??-1));
     const pricedValue=positions.reduce((sum,p)=>sum+(p.valueUsd??0),0);
     const unpricedPositions=positions.filter(p=>p.valueUsd===null).length;
     const buyRows=await DB.prepare("SELECT mint,SUM(token_amount) AS bought_amount,SUM(estimated_cost_usd) AS spent_usd,COUNT(*) AS buy_count,MIN(block_time) AS first_buy_at FROM td_wallet_token_buys WHERE wallet=? GROUP BY mint").bind(wallet).all<{mint:string;bought_amount:number;spent_usd:number|null;buy_count:number;first_buy_at:number|null}>();
+    const sellRows=await DB.prepare("SELECT mint,SUM(token_amount) AS sold_amount,SUM(estimated_proceeds_usd) AS proceeds_usd,COUNT(*) AS sell_count FROM td_wallet_token_sells WHERE wallet=? GROUP BY mint").bind(wallet).all<{mint:string;sold_amount:number;proceeds_usd:number|null;sell_count:number}>();
+    const sellMap=new Map<string,{soldAmount:number;proceedsUsd:number|null;sellCount:number}>();
+    for(const row of sellRows.results??[])sellMap.set(row.mint,{soldAmount:Number(row.sold_amount??0),proceedsUsd:row.proceeds_usd===null?null:Number(row.proceeds_usd),sellCount:Number(row.sell_count??0)});
     const buyMap=new Map<string,{boughtAmount:number;spentUsd:number|null;buyCount:number;firstBuyAt:number|null}>();
     for(const row of buyRows.results??[])buyMap.set(row.mint,{boughtAmount:Number(row.bought_amount??0),spentUsd:row.spent_usd===null?null:Number(row.spent_usd),buyCount:Number(row.buy_count??0),firstBuyAt:row.first_buy_at});
     const priorPrices=new Map<string,number>(); for(const p of positions){const prev=await DB.prepare("SELECT price_usd FROM td_wallet_token_price_history WHERE wallet=? AND mint=? ORDER BY observed_at DESC LIMIT 1").bind(wallet,p.mint).first<{price_usd:number|null}>();if(prev?.price_usd!==null&&prev?.price_usd!==undefined&&Number(prev.price_usd)>0)priorPrices.set(p.mint,Number(prev.price_usd));}
-    const trackedPositions=positions.map(p=>{const b=buyMap.get(p.mint);const avg=b&&b.spentUsd!==null&&b.boughtAmount>0?b.spentUsd/b.boughtAmount:null;const basis=avg===null?null:avg*p.amount;const pnl=p.valueUsd!==null&&basis!==null?p.valueUsd-basis:null;return {...p,estimatedTotalSpentUsd:b?.spentUsd??null,estimatedRemainingCostUsd:basis,estimatedPnlUsd:pnl,estimatedPnlPercent:pnl!==null&&basis!==null&&basis>0?pnl/basis*100:null,detectedBuyCount:b?.buyCount??0,firstBuyAt:b?.firstBuyAt??null,priceChangePercent:p.priceUsd!==null&&priorPrices.has(p.mint)?(p.priceUsd/priorPrices.get(p.mint)!-1)*100:null};});
+    const trackedPositions=positions.map(p=>{const b=buyMap.get(p.mint);const sells=sellMap.get(p.mint);const avg=b&&b.spentUsd!==null&&b.boughtAmount>0?b.spentUsd/b.boughtAmount:null;const bought=b?.boughtAmount??0;const sold=sells?.soldAmount??0;const remainingQty=Math.max(0,bought-sold);const basis=avg===null?null:avg*Math.min(p.amount,remainingQty);const proceeds=sells?.proceedsUsd??null;const pnl=p.valueUsd!==null&&basis!==null?p.valueUsd-basis+(proceeds??0):null;return {...p,estimatedTotalSpentUsd:b?.spentUsd??null,estimatedRemainingCostUsd:basis,estimatedRealizedProceedsUsd:proceeds,estimatedSoldAmount:sold,detectedSellCount:sells?.sellCount??0,estimatedPnlUsd:pnl,estimatedPnlPercent:pnl!==null&&basis!==null&&basis>0?pnl/basis*100:null,detectedBuyCount:b?.buyCount??0,firstBuyAt:b?.firstBuyAt??null,priceChangePercent:p.priceUsd!==null&&priorPrices.has(p.mint)?(p.priceUsd/priorPrices.get(p.mint)!-1)*100:null};});
     const observedAt=Math.floor(Date.now()/1000);
     for(const p of positions){try{await DB.prepare("INSERT OR REPLACE INTO td_wallet_token_price_history (wallet,mint,observed_at,token_amount,price_usd,value_usd,liquidity_usd) VALUES (?,?,?,?,?,?,?)").bind(wallet,p.mint,observedAt,p.amount,p.priceUsd,p.valueUsd,p.liquidityUsd).run();}catch{}}
     const trackedBuyCount=(buyRows.results??[]).reduce((sum,row)=>sum+Number(row.buy_count??0),0);
@@ -391,10 +420,13 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       estimatedTotalSpentUsd:trackedSpend,
       estimatedOpenPnlUsd:estimatedOpenPnl,
       trackedPnlCoverage,
-      costBasisMethod:"Detected SOL- or USDC-outflow swap candidates. USDC spend is treated as approximately USD 1:1; SOL spend uses current SOL/USD spot quote at first detection, not historical fill prices.",
+      estimatedRealizedProceedsUsd:(sellRows.results??[]).reduce((sum,row)=>sum+(row.proceeds_usd===null?0:Number(row.proceeds_usd)),0),
+      indexedHistoryPageSize:historyPage.length,
+      historyIndexExhausted:Boolean((await DB.prepare("SELECT exhausted FROM td_wallet_index_state WHERE wallet=?").bind(wallet).first<{exhausted:number}>())?.exhausted),
+      costBasisMethod:"Candidate buy/sell events are indexed progressively. Current remaining basis uses average-cost approximation; realized proceeds are shown when quote-asset proceeds are identified. SOL conversions use spot price at first detection, not historical fill prices.",
       tradeActivity:tradeActivity.sort((a,b)=>(b.blockTime??0)-(a.blockTime??0)).slice(0,30),
       source: "Solana mainnet RPC + DexScreener spot quotes",
-      disclaimer: "Buy tracking records token inflows paired with SOL or USDC outflow and recognized swap-program evidence. USDC is treated as approximately $1; SOL costs use the SOL/USD quote available when first detected, not historical fill prices. Other quote assets, old transactions outside the scan window, transfers, airdrops, sells and missing prices can make estimates incomplete. P&L is estimated for current remaining holdings, not audited realized profit/loss.",
+      disclaimer: "Historical signature indexing advances by up to 100 transactions per lookup and may take repeated refreshes for large wallets. Swap identification is heuristic. USDC is treated as approximately $1; SOL quote amounts use the SOL/USD spot quote at first detection, not historical fill prices. Transfers, LP actions, other quote assets, incomplete RPC history and token-account lifecycle changes can cause errors. Realized proceeds are estimates; average-cost P&L is not audited FIFO accounting.",
     };
   });
 
