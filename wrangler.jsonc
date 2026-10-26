@@ -19,7 +19,7 @@
     }
   ],
   "vars": {
-    "TRADEDUEL_ALLOWED_ORIGINS": "http://localhost:5173,https://tradeduel.workers.dev",
-    "TRADEDUEL_WALLET_DOMAIN": "tradeduel.workers.dev"
+    "TRADEDUEL_ALLOWED_ORIGINS": "http://localhost:5173,https://tradeduel.therealmattchu.workers.dev",
+    "TRADEDUEL_WALLET_DOMAIN": "tradeduel.therealmattchu.workers.dev"
   }
 }
