@@ -33,7 +33,7 @@ async function fetchHistoricalTokenPrice(mint: string, targetAt: number, poolCac
   let pool = poolCache.get(mint);
   if (pool === undefined) {
     try {
-      const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/tokens/${encodeURIComponent(mint)}/pools?page=1`, { headers: { accept: "application/json" } });
+      const response = await fetch(`https://api.geckoterminal.com/api/v2/networks/solana/tokens/${encodeURIComponent(mint)}/pools?page=1`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
       if (!response.ok) { poolCache.set(mint, null); return noPrice(`pool_lookup_http_${response.status}`); }
       const body = await response.json() as { data?: Array<{ id?: string; attributes?: { address?: string; reserve_in_usd?: string }; relationships?: { base_token?: { data?: { id?: string } }; quote_token?: { data?: { id?: string } } } }> };
       const candidates = (body.data ?? []).flatMap((item) => {
@@ -47,10 +47,10 @@ async function fetchHistoricalTokenPrice(mint: string, targetAt: number, poolCac
       poolCache.set(mint, pool);
     } catch { poolCache.set(mint, null); return noPrice("pool_lookup_unavailable"); }
   }
-  if (!pool) return noPrice("no_liquid_pool_with_token_as_base_asset");
+  if (!pool) return noPrice("no_liquid_pool_with_token_as_base_or_quote_asset");
   try {
     const url = `https://api.geckoterminal.com/api/v2/networks/solana/pools/${encodeURIComponent(pool.address)}/ohlcv/minute?aggregate=1&before_timestamp=${Math.floor(targetAt)+60}&limit=5&currency=usd`;
-    const response = await fetch(url, { headers: { accept: "application/json" } });
+    const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) });
     if (!response.ok) return noPrice(`ohlcv_http_${response.status}`, pool);
     const body = await response.json() as { data?: { attributes?: { ohlcv_list?: number[][] } } };
     const candle = selectHistoricalCandle(body.data?.attributes?.ohlcv_list ?? [],targetAt,180);
