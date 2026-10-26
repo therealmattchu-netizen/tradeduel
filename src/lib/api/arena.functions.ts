@@ -402,12 +402,13 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
     const buyMap=new Map<string,{boughtAmount:number;spentUsd:number|null;buyCount:number;firstBuyAt:number|null}>();
     for(const row of buyRows.results??[])buyMap.set(row.mint,{boughtAmount:Number(row.bought_amount??0),spentUsd:row.spent_usd===null?null:Number(row.spent_usd),buyCount:Number(row.buy_count??0),firstBuyAt:row.first_buy_at});
     const priorPrices=new Map<string,number>(); for(const p of positions){const prev=await DB.prepare("SELECT price_usd FROM td_wallet_token_price_history WHERE wallet=? AND mint=? ORDER BY observed_at DESC LIMIT 1").bind(wallet,p.mint).first<{price_usd:number|null}>();if(prev?.price_usd!==null&&prev?.price_usd!==undefined&&Number(prev.price_usd)>0)priorPrices.set(p.mint,Number(prev.price_usd));}
-    const trackedPositions=positions.map(p=>{const b=buyMap.get(p.mint);const sells=sellMap.get(p.mint);const avg=b&&b.spentUsd!==null&&b.boughtAmount>0?b.spentUsd/b.boughtAmount:null;const bought=b?.boughtAmount??0;const sold=sells?.soldAmount??0;const remainingQty=Math.max(0,bought-sold);const basis=avg===null?null:avg*Math.min(p.amount,remainingQty);const proceeds=sells?.proceedsUsd??null;const pnl=p.valueUsd!==null&&basis!==null?p.valueUsd-basis+(proceeds??0):null;return {...p,estimatedTotalSpentUsd:b?.spentUsd??null,estimatedRemainingCostUsd:basis,estimatedRealizedProceedsUsd:proceeds,estimatedSoldAmount:sold,detectedSellCount:sells?.sellCount??0,estimatedPnlUsd:pnl,estimatedPnlPercent:pnl!==null&&basis!==null&&basis>0?pnl/basis*100:null,detectedBuyCount:b?.buyCount??0,firstBuyAt:b?.firstBuyAt??null,priceChangePercent:p.priceUsd!==null&&priorPrices.has(p.mint)?(p.priceUsd/priorPrices.get(p.mint)!-1)*100:null};});
+    const trackedPositions=positions.map(p=>{const b=buyMap.get(p.mint);const sells=sellMap.get(p.mint);const avg=b&&b.spentUsd!==null&&b.boughtAmount>0?b.spentUsd/b.boughtAmount:null;const bought=b?.boughtAmount??0;const sold=sells?.soldAmount??0;const remainingQty=Math.max(0,bought-sold);const basis=avg===null?null:avg*Math.min(p.amount,remainingQty);const proceeds=sells?.proceedsUsd??null;const realizedPnl=avg!==null&&proceeds!==null?proceeds-avg*sold:null;const unrealizedPnl=p.valueUsd!==null&&basis!==null?p.valueUsd-basis:null;const pnl=realizedPnl!==null&&unrealizedPnl!==null?realizedPnl+unrealizedPnl:null;return {...p,estimatedTotalSpentUsd:b?.spentUsd??null,estimatedRemainingCostUsd:basis,estimatedRealizedProceedsUsd:proceeds,estimatedSoldAmount:sold,detectedSellCount:sells?.sellCount??0,estimatedRealizedPnlUsd:realizedPnl,estimatedUnrealizedPnlUsd:unrealizedPnl,estimatedPnlUsd:pnl,estimatedPnlPercent:pnl!==null&&basis!==null&&basis>0?pnl/basis*100:null,detectedBuyCount:b?.buyCount??0,firstBuyAt:b?.firstBuyAt??null,priceChangePercent:p.priceUsd!==null&&priorPrices.has(p.mint)?(p.priceUsd/priorPrices.get(p.mint)!-1)*100:null};});
     const observedAt=Math.floor(Date.now()/1000);
     for(const p of positions){try{await DB.prepare("INSERT OR REPLACE INTO td_wallet_token_price_history (wallet,mint,observed_at,token_amount,price_usd,value_usd,liquidity_usd) VALUES (?,?,?,?,?,?,?)").bind(wallet,p.mint,observedAt,p.amount,p.priceUsd,p.valueUsd,p.liquidityUsd).run();}catch{}}
     const trackedBuyCount=(buyRows.results??[]).reduce((sum,row)=>sum+Number(row.buy_count??0),0);
     const trackedSpend=(buyRows.results??[]).reduce((sum,row)=>sum+(row.spent_usd===null?0:Number(row.spent_usd)),0);
-    const estimatedOpenPnl=trackedPositions.reduce((sum,p)=>sum+(p.estimatedPnlUsd??0),0);
+    const estimatedOpenPnl=trackedPositions.reduce((sum,p)=>sum+(p.estimatedUnrealizedPnlUsd??0),0);
+    const estimatedRealizedPnl=trackedPositions.reduce((sum,p)=>sum+(p.estimatedRealizedPnlUsd??0),0);
     const trackedPnlCoverage=trackedPositions.filter(p=>p.estimatedPnlUsd!==null).length;
     return {
       wallet,
@@ -421,6 +422,7 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       estimatedOpenPnlUsd:estimatedOpenPnl,
       trackedPnlCoverage,
       estimatedRealizedProceedsUsd:(sellRows.results??[]).reduce((sum,row)=>sum+(row.proceeds_usd===null?0:Number(row.proceeds_usd)),0),
+      estimatedRealizedPnlUsd:estimatedRealizedPnl,
       indexedHistoryPageSize:historyPage.length,
       historyIndexExhausted:Boolean((await DB.prepare("SELECT exhausted FROM td_wallet_index_state WHERE wallet=?").bind(wallet).first<{exhausted:number}>())?.exhausted),
       costBasisMethod:"Candidate buy/sell events are indexed progressively. Current remaining basis uses average-cost approximation; realized proceeds are shown when quote-asset proceeds are identified. SOL conversions use spot price at first detection, not historical fill prices.",
