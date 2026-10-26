@@ -12,7 +12,7 @@ import { button } from "@higgsfield/quanta/button";
 import { NotFound } from "@higgsfield/quanta/not-found";
 
 import appCss from "../styles.css?url";
-import { reportHiggsfieldError } from "../lib/higgsfield-error-reporting";
+import { reportApplicationError } from "../lib/error-reporting";
 // Page metadata (browser <title>/favicon + social og: tags) committed into the
 // repo by the marketplace meta API and read at BUILD time — no runtime fetch.
 // Editing it via the app settings UI rewrites this file and redeploys the app.
@@ -124,7 +124,7 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   console.error(error);
   const router = useRouter();
   useEffect(() => {
-    reportHiggsfieldError(error, { boundary: "tanstack_root_error_component" });
+    reportApplicationError(error, { boundary: "tanstack_root_error_component" });
   }, [error]);
 
   return (
@@ -195,7 +195,7 @@ function RootComponent() {
         installHiggsfieldDesignInspector();
       })
       .catch((error) => {
-        reportHiggsfieldError(
+        reportApplicationError(
           error instanceof Error ? error : new Error("Failed to load design inspector"),
           {
             boundary: "higgsfield_design_inspector_import",
