@@ -83,7 +83,10 @@ export const createWalletChallenge = createServerFn({ method: "POST" }).validato
   const { DB } = bindings();
   if (!DB) throw new Error("Wallet verification is not configured yet.");
   const nonce = crypto.randomUUID();
-  const domain = "tradeduel.higgsfield.app";
+  const domain = bindings().TRADEDUEL_WALLET_DOMAIN?.trim().toLowerCase();
+  if (!domain || !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)) {
+    throw new Error("Wallet verification is not configured for this deployment.");
+  }
   const expiresAt = Math.floor(Date.now() / 1000) + 300;
   const message = `TradeDuel wallet verification\nDomain: ${domain}\nWallet: ${data.wallet}\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}\nExpiration Time: ${new Date(expiresAt * 1000).toISOString()}\n\nThis signature proves wallet ownership only. It does not authorize transactions or transfer funds.`;
   await DB.prepare("INSERT INTO td_challenges (nonce, wallet, message, expires_at) VALUES (?, ?, ?, ?)").bind(nonce, data.wallet, message, expiresAt).run();
