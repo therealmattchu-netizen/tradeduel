@@ -1,18 +1,9 @@
-import { createFileRoute } from "@tanstack/react-router";
-import { CustomTemplate } from "@/layouts/custom";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
-interface AppSearch {
-  preview: boolean;
-}
-
+// The old Studio preview route depended on the platform's private UI kit.
+// This independent build keeps the URL harmlessly routed back to the public site.
 export const Route = createFileRoute("/app")({
-  validateSearch: (search: Record<string, unknown>): AppSearch => ({
-    preview: search.preview === "1" || search.preview === true,
-  }),
-  component: AppRoute,
+  beforeLoad: () => {
+    throw redirect({ to: "/" });
+  },
 });
-
-function AppRoute() {
-  const { preview } = Route.useSearch();
-  return <CustomTemplate previewMode={preview} />;
-}
