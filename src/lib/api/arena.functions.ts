@@ -1533,7 +1533,7 @@ export const surrenderCustomMatch = createServerFn({ method: "POST" })
         .bind(room.id, player.wallet, opponent?.wallet ?? player.wallet, null, player.rating, after, delta, outcome));
     }
     statements.push(DB.prepare("INSERT INTO td_custom_match_settlements (match_id,status,team_one_return_pct,team_two_return_pct,member_returns_json,blockers_json,indexed_transactions,elo_applied,updated_at) VALUES (?,'verified',NULL,NULL,?,?,0,1,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET status='verified',member_returns_json=excluded.member_returns_json,blockers_json=excluded.blockers_json,elo_applied=1,updated_at=datetime('now')")
-      .bind(room.id, JSON.stringify(roster.map(player => ({wallet:player.wallet,team:player.team_number,returnPct:null,outcome:player.team_number===losingTeam?"loss":"win",reason:"surrender_forfeit"})), JSON.stringify(["surrender_forfeit"])));
+      .bind(room.id, JSON.stringify(roster.map(player => ({wallet:player.wallet,team:player.team_number,returnPct:null,outcome:player.team_number===losingTeam?"loss":"win",reason:"surrender_forfeit"}))), JSON.stringify(["surrender_forfeit"])));
     await DB.batch(statements);
     return { ok: true, status: "completed", surrenderedBy: wallet, outcome: "loss", losingTeam, winningTeam, eloApplied: true };
   });
