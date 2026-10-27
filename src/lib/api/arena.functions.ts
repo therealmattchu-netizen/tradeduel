@@ -781,6 +781,24 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
         tokenNames.set(mint, {name:best.baseToken?.name ?? null,symbol:best.baseToken?.symbol ?? null,pairUrl:best.url ?? null});
       } catch { /* Keep this wallet observation incomplete if no reliable quote exists. */ }
     }));
+    // Wrapped SOL may appear as the quote asset in pools. Recover a SOL/USD
+    // estimate from liquid quote-side pools if the base-token lookup missed it.
+    const wrappedSolMint = "So11111111111111111111111111111111111111112";
+    if (!prices.has(wrappedSolMint)) {
+      try {
+        const solResponse = await fetch("https://api.dexscreener.com/latest/dex/tokens/" + wrappedSolMint, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(4000) });
+        if (solResponse.ok) {
+          const solBody = await solResponse.json() as { pairs?: Array<{ baseToken?: { address?: string }; quoteToken?: { address?: string }; priceUsd?: string; priceNative?: string; liquidity?: { usd?: number } }> };
+          const liquidPairs = (solBody.pairs ?? []).filter(pair => Number(pair.liquidity?.usd ?? 0) >= 100);
+          const direct = liquidPairs.filter(pair => pair.baseToken?.address === wrappedSolMint && Number(pair.priceUsd) > 0).sort((a,b) => Number(b.liquidity?.usd ?? 0) - Number(a.liquidity?.usd ?? 0))[0];
+          if (direct) { prices.set(wrappedSolMint, Number(direct.priceUsd)); liquidities.set(wrappedSolMint, Number(direct.liquidity?.usd ?? 0)); }
+          else {
+            const inverse = liquidPairs.filter(pair => pair.quoteToken?.address === wrappedSolMint && Number(pair.priceUsd) > 0 && Number(pair.priceNative) > 0).map(pair => ({ usd: Number(pair.priceUsd) / Number(pair.priceNative), liquidity: Number(pair.liquidity?.usd ?? 0) })).filter(pair => Number.isFinite(pair.usd) && pair.usd > 0).sort((a,b) => b.liquidity - a.liquidity)[0];
+            if (inverse) { prices.set(wrappedSolMint, inverse.usd); liquidities.set(wrappedSolMint, inverse.liquidity); }
+          }
+        }
+      } catch { /* Keep SOL unpriced rather than inventing a quote. */ }
+    }
     const tokenValues = tokenBalances.map((entry) => ({ ...entry, ...(tokenNames.get(entry.mint)??{}), marketCapUsd:marketCaps.get(entry.mint)??null, priceUsd: prices.get(entry.mint) ?? null, valueUsd: prices.has(entry.mint) ? entry.amount * prices.get(entry.mint)! : null }));
     const solPrice = prices.get("So11111111111111111111111111111111111111112");
     const unpricedMints = tokenValues.filter((entry) => entry.valueUsd === null).length;
