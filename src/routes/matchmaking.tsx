@@ -20,6 +20,7 @@ function Matchmaking() {
   return (
     <SiteShell active="matchmaking">
       <PageHero
+        variant="matchmaking"
         eyebrow="MATCHMAKING"
         title="Choose your"
         accent="arena."
