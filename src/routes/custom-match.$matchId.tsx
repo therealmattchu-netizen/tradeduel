@@ -16,13 +16,13 @@ function CustomLiveMatch(){
  const [wallet,setWallet]=useState(""); const [error,setError]=useState("");
  const [chat,setChat]=useState<Chat[]>([]); const [draft,setDraft]=useState(""); const [channel,setChannel]=useState<"all"|"team">("all");
  const [now,setNow]=useState(Date.now()); const [latestId,setLatestId]=useState(0); const [surrenderBusy,setSurrenderBusy]=useState(false); const [surrenderNotice,setSurrenderNotice]=useState(""); const [resultSeconds,setResultSeconds]=useState(4); const [resultDismissed,setResultDismissed]=useState(false);
- useEffect(()=>{setWallet(window.sessionStorage.getItem("td_session_wallet")||"");let alive=true;let busy=false;let activityFailures=0;
+ useEffect(()=>{setWallet(window.sessionStorage.getItem("td_session_wallet")||"");let alive=true;let busy=false;let activityFailures=0;let activityFailures=0;
   const poll=async()=>{if(busy)return;const token=window.sessionStorage.getItem("td_session_token")||"";if(!token)return;busy=true;try{
    const s=await getCustomMatchStatus({data:{token,matchId}});
-   if(!alive)return;setRoom(s.customRoom);setError("");
+   if(!alive)return;setRoom(s.customRoom);
    if(s.customRoom?.status==="completed")window.dispatchEvent(new CustomEvent("tradeduel:match-complete"));
-   try { const a=await syncMatchActivity({data:{token,matchId}}); if(alive)setActivity(a); }
-   catch (activityError) { if(alive)setError(activityError instanceof Error?activityError.message:"Solana activity tracking is temporarily unavailable; room timer remains connected."); }
+   try { const a=await syncMatchActivity({data:{token,matchId}}); if(alive){setActivity(a);activityFailures=0;setError("");} }
+   catch (activityError) { if(alive){activityFailures+=1;if(activityFailures>=3)setError("Solana data is delayed. Keeping the last confirmed snapshot while RPC retries in the background.");} }
   }catch(e){if(alive)setError(e instanceof Error?e.message:"Live match sync is temporarily unavailable.");}finally{busy=false;}};
   void poll();const timer=window.setInterval(()=>void poll(),5000);const clock=window.setInterval(()=>setNow(Date.now()),1000);
   return()=>{alive=false;window.clearInterval(timer);window.clearInterval(clock)};
