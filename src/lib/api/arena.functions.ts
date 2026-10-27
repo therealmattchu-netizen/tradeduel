@@ -845,6 +845,11 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
               : NaN;
             const provisionalPrice = cap / supply;
             if (Number.isFinite(provisionalPrice) && provisionalPrice > 0 && supply > 0) prices.set(mint, provisionalPrice);
+          } else if (Number.isFinite(cap) && cap > 0) {
+            // Display-only fallback for Pump.fun's standard 1B-token supply when
+            // the public coin endpoint omits supply. Never used for official settlement.
+            const provisionalPrice = cap / 1_000_000_000;
+            if (Number.isFinite(provisionalPrice) && provisionalPrice > 0) prices.set(mint, provisionalPrice);
           }
         }
       } catch { /* Keep unknown bonding-curve tokens pending instead of inventing a quote. */ }
