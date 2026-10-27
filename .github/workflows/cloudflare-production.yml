@@ -1,0 +1,73 @@
+name: Deploy TradeDuel production to Cloudflare
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_production:
+        description: "Type DEPLOY to apply pending D1 migrations and deploy app.tradeduel.win"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tradeduel-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-production:
+    if: github.ref == 'refs/heads/migration/cloudflare-audit' && inputs.confirm_production == 'DEPLOY'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: cloudflare-production
+    steps:
+      - name: Check out reviewed audit branch
+        uses: actions/checkout@v4
+        with:
+          ref: migration/cloudflare-audit
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate UI, typecheck, tests, and production build
+        run: |
+          bun run check:ui
+          bun run typecheck
+          bun test tests/*.test.ts
+          bun run build
+
+      - name: Generate production Worker configuration
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const config = JSON.parse(fs.readFileSync('wrangler.jsonc', 'utf8'));
+          config.name = 'tradeduel';
+          config.vars = {
+            ...(config.vars ?? {}),
+            TRADEDUEL_ALLOWED_ORIGINS: 'https://app.tradeduel.win,https://tradeduel.win,https://www.tradeduel.win',
+            TRADEDUEL_WALLET_DOMAIN: 'app.tradeduel.win'
+          };
+          const db = (config.d1_databases ?? []).find((item) => item.binding === 'DB');
+          if (!db || db.database_name !== 'tradeduel-db' || !db.database_id) {
+            throw new Error('Expected the existing tradeduel-db production D1 binding; refusing to deploy with an unknown database.');
+          }
+          fs.writeFileSync('wrangler.production.jsonc', JSON.stringify(config, null, 2) + '\n');
+          NODE
+
+      - name: Apply pending migrations to production D1
+        run: bunx wrangler@latest d1 migrations apply tradeduel-db --remote --config wrangler.production.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy production Worker
+        run: bunx wrangler@latest deploy --config wrangler.production.jsonc --message "TradeDuel production deploy from migration/cloudflare-audit"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
