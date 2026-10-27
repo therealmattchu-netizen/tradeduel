@@ -1,3 +1,4 @@
+// [deploy-production] Deploy Pump.fun bonding-curve price fallback
 // [deploy-production] Deploy live pricing fallback fix
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
