@@ -2047,6 +2047,7 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
          }catch{}}));
          const stillMissing=missing.filter(mint=>!prices.has(mint));
         type PumpCoin={name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string;virtual_sol_reserves?:number|string;virtual_token_reserves?:number|string};
+        const pumpCoinQuotes=new Map<string,PumpCoin>();
         await Promise.all(stillMissing.map(async mint=>{try{
           let coin:PumpCoin|undefined;
           for(const endpoint of ["https://frontend-api-v3.pump.fun/coins-v2/"+encodeURIComponent(mint),"https://frontend-api-v3.pump.fun/coins/"+encodeURIComponent(mint)+"?sync=true"]){
@@ -2062,6 +2063,7 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
             }catch{}
           }
           if(!coin)return;
+          pumpCoinQuotes.set(mint,coin);
           const cap=Number(coin.usd_market_cap??coin.market_cap_usd??coin.market_cap);
           if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);
           if(!names.has(mint)&&(coin.name||coin.symbol))names.set(mint,{name:coin.name??null,symbol:coin.symbol??null,pairUrl:"https://pump.fun/coin/"+mint});
@@ -2078,6 +2080,26 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
             else {const inverse=liquid.filter(p=>p.quoteToken?.address===wrappedSol&&Number(p.priceUsd)>0&&Number(p.priceNative)>0).map(p=>({price:Number(p.priceUsd)/Number(p.priceNative),liquidity:Number(p.liquidity?.usd??0)})).filter(p=>Number.isFinite(p.price)&&p.price>0).sort((a,b)=>b.liquidity-a.liquidity)[0];if(inverse)prices.set(wrappedSol,inverse.price);}
           }
         }catch{}}
+        // Pump.fun's coin endpoint can provide virtual bonding-curve reserves even when
+        // it omits price_usd and market-cap fields. Derive a spot estimate from those
+        // reserves and the SOL/USD mark; this is display-only, never settlement proof.
+        const liveSolUsd=prices.get(wrappedSol);
+        if(liveSolUsd&&liveSolUsd>0){
+          for(const mint of stillMissing){
+            if(prices.has(mint))continue;
+            const coin=pumpCoinQuotes.get(mint);
+            const solReserves=Number(coin?.virtual_sol_reserves);
+            const tokenReserves=Number(coin?.virtual_token_reserves);
+            if(!(solReserves>0&&tokenReserves>0&&Number.isFinite(solReserves)&&Number.isFinite(tokenReserves)))continue;
+            // Pump.fun reserve values are lamports and 6-decimal token base units.
+            const solPerToken=(solReserves/1e9)/(tokenReserves/1e6);
+            const usdPerToken=solPerToken*liveSolUsd;
+            if(!(usdPerToken>0&&Number.isFinite(usdPerToken)))continue;
+            prices.set(mint,usdPerToken);
+            if(!caps.has(mint))caps.set(mint,usdPerToken*1_000_000_000);
+            if(!names.has(mint)&&(coin?.name||coin?.symbol))names.set(mint,{name:coin?.name??null,symbol:coin?.symbol??null,pairUrl:"https://pump.fun/coin/"+mint});
+          }
+        }
         const tokenValues=tokenBalances.map(t=>({...t,...(names.get(t.mint)??{}),priceUsd:prices.get(t.mint)??null,marketCapUsd:caps.get(t.mint)??null,liquidityUsd:liquidity.get(t.mint)??null,valueUsd:prices.has(t.mint)?t.amount*prices.get(t.mint)!:null}));
         // Include the SOL/USD oracle mark in the snapshot JSON even when the wallet has no wrapped-SOL SPL account. The match scorer reads this mark to convert SOL-denominated trade P&L into USD.
         const snapshotTokenValues=[...tokenValues,{mint:wrappedSol,amount:0,name:"Solana",symbol:"SOL",priceUsd:prices.get(wrappedSol)??null,marketCapUsd:null,liquidityUsd:null,valueUsd:0}];
