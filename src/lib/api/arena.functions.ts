@@ -1501,7 +1501,7 @@ export const requestCustomMatchRematch = createServerFn({ method: "POST" })
     if(!match||match.status!=="completed"||match.mode!=="head_to_head_percentage")throw new Error("Only completed Classic matches can be rematched.");
     const result=await DB.prepare("SELECT opponent_wallet,return_pct,outcome FROM td_custom_match_elo_results WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{opponent_wallet:string;return_pct:number;outcome:string}>();
     if(!result)throw new Error("A verified result is required before requesting a rematch.");
-    if(result.outcome==="win")throw new Error("Only the losing player or a player in a draw can request a rematch.");
+    if(result.outcome!=="loss")throw new Error("Only the losing player can request a rematch.");
     const opponent=await DB.prepare("SELECT return_pct FROM td_custom_match_elo_results WHERE match_id=? AND wallet=?").bind(data.matchId,result.opponent_wallet).first<{return_pct:number}>();
     if(!opponent||result.return_pct>opponent.return_pct)throw new Error("Only the losing player can request a rematch.");
     const prior=await DB.prepare("SELECT status FROM td_custom_match_rematches WHERE match_id=?").bind(data.matchId).first<{status:string}>();
