@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { PlayerProfileMenu } from "@/components/player-profile-menu";
 
 export function SwordsMark({ size = 30 }: { size?: number }) {
-  return <img className="td-swords-mark" src="/brand-mark.svg" width={size} height={size} alt="" aria-hidden="true" />;
+  return <img className="td-swords-mark" src="/brand-mark-exact.png" width={size} height={size} alt="" aria-hidden="true" />;
 }
 
 export function SiteShell({ children, active }: { children: ReactNode; active?: string }) {
@@ -38,7 +38,7 @@ export function PageHero({ eyebrow, title, accent, description, variant = "arena
       : variant === "spectate" ? <div className="td-hero-radar"><div className="td-radar-ring"/><div className="td-radar-ring"/><div className="td-radar-ring"/><i className="td-radar-sweep"/><span className="td-radar-node node-a"/><span className="td-radar-node node-b"/><span className="td-radar-node node-c"/><b>LIVE<br/>FEED</b><small>SPECTATOR SIGNAL</small></div>
       : variant === "matchmaking" ? <div className="td-hero-matchup"><div className="td-matchup-card card-a"><small>PLAYER A</small><div className="td-matchup-bars">{Array.from({length:7},(_,i)=><i key={i} style={{height:`${28+((i*23+17)%64)}%`}}/>)}</div><b>PORTFOLIO A</b></div><div className="td-matchup-vs">VS</div><div className="td-matchup-card card-b"><small>PLAYER B</small><div className="td-matchup-bars">{Array.from({length:7},(_,i)=><i key={i} style={{height:`${30+((i*19+9)%60)}%`}}/>)}</div><b>PORTFOLIO B</b></div><small className="td-matchup-foot">HEAD-TO-HEAD · SOLANA</small></div>
       : variant === "tracker" ? <div className="td-hero-wallet"><div className="td-wallet-orbit"/><div className="td-wallet-chip"><span>◎</span><b>WALLET</b><small>PUBLIC ADDRESS</small></div><div className="td-wallet-flow">{Array.from({length:12},(_,i)=><i key={i} style={{height:`${20+((i*29+13)%70)}%`}}/>)}</div><small>ON-CHAIN ACTIVITY</small></div>
-      : <div className="td-hero-arena td-hero-arena--clean"><SwordsMark size={31}/><small>TRADEDUEL · LIVE ARENA</small></div>}
+      : <div className="td-hero-arena"><div className="td-arena-orbit orbit-one"/><div className="td-arena-orbit orbit-two"/><div className="td-arena-mark"><img src="/brand-mark-exact.png" alt=""/></div><div className="td-arena-wave">{Array.from({length:18},(_,i)=><i key={i} style={{height:`${24+((i*17+11)%65)}%`}}/>)}</div><small>TRADEDUEL · LIVE ARENA</small></div>}
     </div>
   </section>;
 }

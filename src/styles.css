@@ -811,10 +811,3 @@ body { margin: 0; background: var(--td-bg); color: var(--td-white); font-family:
 .td-arena-wave{position:absolute;left:7%;right:7%;bottom:37px;height:43px;display:flex;align-items:flex-end;gap:4px;border-bottom:1px solid rgba(165,107,255,.4)}.td-arena-wave i{flex:1;background:linear-gradient(#cba7ff,#8241e6);border-radius:3px 3px 0 0}
 .td-hero-arena>small{position:absolute;bottom:13px;left:0;right:0;text-align:center;color:#bba8db;font:9px var(--td-mono);letter-spacing:2px}
 @media(max-width:760px){.td-page-hero-visual{min-height:230px}.td-hero-podium,.td-hero-dialogue,.td-hero-rating,.td-hero-constellation,.td-hero-radar,.td-hero-matchup,.td-hero-wallet,.td-hero-arena{height:220px}.td-page-hero--matchmaking .td-page-hero-visual{min-height:250px}.td-podium-bars i{width:48px}.td-podium-bars i:nth-child(2){width:54px}.td-rating-ring{width:150px;height:150px}.td-rating-center strong{font-size:42px}}
-
-
-/* Keep the TradeDuel mark consistent; no orbit/particle decorations around the logo. */
-.td-hero-arena--clean { background: none !important; }
-.td-hero-arena--clean > .td-swords-mark { width: 31px !important; height: 31px !important; }
-.td-live-match-purple [aria-label="Match found"] img { width: 31px !important; height: 31px !important; object-fit: contain !important; }
-.td-live-match-purple [aria-label="Match found"] > div > div:first-child { height: 48px !important; }
