@@ -1788,7 +1788,7 @@ export const getCustomMatchHistory = createServerFn({ method: "POST" })
       )) AS opponent_wallet,
       r.return_pct,r.elo_before,r.elo_after,r.elo_delta,
       COALESCE(r.outcome, CASE WHEN m.status='completed' THEN 'unverified' ELSE 'pending' END) AS outcome,
-      COALESCE(r.settled_at,m.updated_at,m.ends_at,m.started_at,m.created_at) AS settled_at,
+      COALESCE(r.settled_at,m.finished_at,m.ends_at,m.started_at,m.created_at) AS settled_at,
       m.started_at,m.ends_at,m.duration_seconds,m.mode,m.status,
       CASE WHEN r.match_id IS NULL THEN 0 ELSE 1 END AS elo_recorded,
       CASE WHEN s.blockers_json LIKE '%surrender_forfeit%' THEN 1 ELSE 0 END AS is_forfeit
@@ -1797,7 +1797,7 @@ export const getCustomMatchHistory = createServerFn({ method: "POST" })
       LEFT JOIN td_custom_match_elo_results r ON r.match_id=m.id AND r.wallet=mine.wallet
       LEFT JOIN td_custom_match_settlements s ON s.match_id=m.id
       WHERE mine.wallet=? AND m.status IN ('completed','cancelled')
-      ORDER BY COALESCE(r.settled_at,m.updated_at,m.ends_at,m.started_at,m.created_at) DESC
+      ORDER BY COALESCE(r.settled_at,m.finished_at,m.ends_at,m.started_at,m.created_at) DESC
       LIMIT ?`).bind(wallet,data.limit??50).all<any>();
     return {wallet,matches:rows.results??[]};
   });
