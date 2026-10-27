@@ -546,7 +546,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   let match: SyncMatch | null = await DB.prepare("SELECT id, player_one, player_two, status, started_at, ends_at, verification_status FROM td_matches WHERE id = ? AND (player_one = ? OR player_two = ?)").bind(data.matchId, wallet, wallet).first<Omit<SyncMatch,"custom">>().then(row=>row?{...row,custom:false}:null);
   let participants: string[] = [];
   if (!match) {
-    const custom = await DB.prepare("SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string;started_at:string|null;ends_at:string|null;mode:string;max_players:number;duration_seconds:number}>();
+    const custom = await DB.prepare("SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds,surrendered_by FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string;started_at:string|null;ends_at:string|null;mode:string;max_players:number;duration_seconds:number}>();
     const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
     if (!custom || !member) throw new Error("Match not found for this wallet.");
     const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string;team_number:number}>();
@@ -1221,13 +1221,22 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
   .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    const match = await DB.prepare("SELECT id,status,mode,started_at,ends_at,max_players FROM td_custom_matches WHERE id=?")
-      .bind(data.matchId).first<{id:string;status:string;mode:string;started_at:string|null;ends_at:string|null;max_players:number}>();
+    const match = await DB.prepare("SELECT id,status,mode,started_at,ends_at,max_players,surrendered_by FROM td_custom_matches WHERE id=?")
+      .bind(data.matchId).first<{id:string;status:string;mode:string;started_at:string|null;ends_at:string|null;max_players:number;surrendered_by:string|null}>();
     if (!match) throw new Error("Custom match not found.");
     const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,wallet")
       .bind(match.id).all<{wallet:string;team_number:number}>();
     const roster = members.results ?? [];
     if (!roster.some(m=>m.wallet===wallet)) throw new Error("Only room members can reconcile this match.");
+    // A surrender is an explicit forfeit result, not a portfolio-price draw. Preserve its
+    // atomic ELO result and prevent the periodic valuation reconciler from replacing it.
+    if (match.surrendered_by) {
+      const saved = await DB.prepare("SELECT status,elo_applied,blockers_json FROM td_custom_match_settlements WHERE match_id=?")
+        .bind(match.id).first<{status:string;elo_applied:number;blockers_json:string|null}>();
+      const results = await DB.prepare("SELECT wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome,settled_at FROM td_custom_match_elo_results WHERE match_id=? ORDER BY wallet")
+        .bind(match.id).all<any>();
+      return { status: saved?.status ?? "verified", eloApplied: saved?.elo_applied === 1, surrenderedBy: match.surrendered_by, results: results.results ?? [], blockers: saved?.blockers_json ? JSON.parse(saved.blockers_json) : ["surrender_forfeit"], message: "Match ended by surrender; the forfeit result takes precedence over portfolio return." };
+    }
     const blockers:string[]=[];
     // Score only detected post-start swap candidates, after accounting for pre-match inventory.
     if (match.status!=="completed" || !match.ends_at || new Date(match.ends_at).getTime()>Date.now()) blockers.push("match_not_expired");
@@ -1464,7 +1473,7 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
       "SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds FROM td_custom_matches WHERE id=?"
     ).bind(data.matchId).first<{
       id: string; status: string; started_at: string | null; ends_at: string | null;
-      mode: string; max_players: number; duration_seconds: number;
+      mode: string; max_players: number; duration_seconds: number; surrendered_by: string | null;
     }>();
     if (!match) throw new Error("This match does not exist.");
     const member = await DB.prepare(
@@ -1499,6 +1508,7 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
     return {
       customRoom: {
         status: currentStatus,
+        surrenderedBy: match.surrendered_by,
         startedAt,
         endsAt,
         durationSeconds: match.duration_seconds,
