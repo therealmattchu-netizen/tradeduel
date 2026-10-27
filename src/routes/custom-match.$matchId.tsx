@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
-import { getCustomMatchStatus, syncMatchActivity, getCustomMatchChat, sendCustomMatchChat, surrenderCustomMatch } from "@/lib/api/arena.functions";
+import { getCustomMatchStatus, syncMatchActivity, getCustomMatchChat, sendCustomMatchChat, surrenderCustomMatch, reconcileCustomMatchSettlement } from "@/lib/api/arena.functions";
 export const Route = createFileRoute("/custom-match/$matchId")({ head: () => ({ meta: [{ title: "Live duel | TradeDuel" }] }), component: CustomLiveMatch });
 type Member = { wallet:string; team_number:number };
 type TokenHolding = { mint:string; amount:number; name?:string|null; symbol?:string|null; marketCapUsd?:number|null; priceUsd?:number|null; valueUsd?:number|null; pairUrl?:string|null };
