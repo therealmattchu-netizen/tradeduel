@@ -133,7 +133,7 @@ export const getMyRating = createServerFn({ method: "POST" }).validator(z.object
 export const getLeaderboard = createServerFn({ method: "GET" }).handler(async () => {
   const { DB } = bindings();
   if (!DB) return { players: [], verified: false };
-  const result = await DB.prepare("SELECT u.wallet, u.rating, u.wins, u.losses, u.draws FROM td_users u WHERE EXISTS (SELECT 1 FROM td_matches m WHERE m.verification_status = 'verified' AND m.status = 'completed' AND (m.player_one = u.wallet OR m.player_two = u.wallet)) ORDER BY u.rating DESC, u.wins DESC LIMIT 100").all<{ wallet: string; rating: number; wins: number; losses: number; draws: number }>();
+  const result = await DB.prepare("SELECT u.wallet, u.rating, u.wins, u.losses, u.draws FROM td_users u WHERE EXISTS (SELECT 1 FROM td_matches m WHERE m.verification_status = 'verified' AND m.status = 'completed' AND (m.player_one = u.wallet OR m.player_two = u.wallet)) OR EXISTS (SELECT 1 FROM td_custom_match_settlements s JOIN td_custom_match_members mm ON mm.match_id=s.match_id WHERE s.status='verified' AND s.elo_applied=1 AND mm.wallet=u.wallet) ORDER BY u.rating DESC, u.wins DESC LIMIT 100").all<{ wallet: string; rating: number; wins: number; losses: number; draws: number }>();
   return { players: result.results ?? [], verified: true };
 });
 
@@ -1182,12 +1182,43 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
     if((prices?.rejected??0)>0) blockers.push("one_or_more_historical_price_quotes_failed_quality_checks");
     const teamScore=(team:number)=>{const values=returns.filter(r=>r.team===team);return values.length>0&&values.every(r=>r.returnPct!==null)?values.reduce((sum,r)=>sum+(r.returnPct??0),0)/values.length:null;};
     const teamOne=teamScore(1),teamTwo=teamScore(2);
-    const status=blockers.length?"review_required":"verified";
+    const priorSettlement=await DB.prepare("SELECT elo_applied FROM td_custom_match_settlements WHERE match_id=?").bind(match.id).first<{elo_applied:number}>(); const status=priorSettlement?.elo_applied===1?"verified":blockers.length?"review_required":"verified";
     const unique=[...new Set(blockers)];
     const txCount=await DB.prepare("SELECT COUNT(*) AS count FROM td_match_accounting_ledger WHERE match_id=?").bind(match.id).first<{count:number}>();
     await DB.prepare("INSERT INTO td_custom_match_settlements (match_id,status,team_one_return_pct,team_two_return_pct,member_returns_json,blockers_json,indexed_transactions,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET status=excluded.status,team_one_return_pct=excluded.team_one_return_pct,team_two_return_pct=excluded.team_two_return_pct,member_returns_json=excluded.member_returns_json,blockers_json=excluded.blockers_json,indexed_transactions=excluded.indexed_transactions,updated_at=datetime('now')")
       .bind(match.id,status,teamOne,teamTwo,JSON.stringify(returns),JSON.stringify(unique),txCount?.count??0).run();
-    return {matchId:match.id,status,teamOneReturnPct:teamOne,teamTwoReturnPct:teamTwo,members:returns,blockers:unique,priceLookupsThisRun:quoteLookups,indexedTransactions:txCount?.count??0,eloApplied:false,message:status==="verified"?"All team members passed the configured historical portfolio reconciliation checks.":"Team scores remain unverified until all historical prices, snapshots, transaction history, transfers, and lifecycle effects are reconciled."};
+
+    // Official ELO is only awarded for verified Classic percentage 1v1 matches.
+    // The conditional claim prevents repeated polling from awarding rating more than once.
+    let eloApplied = false;
+    if (status === "verified" && match.mode === "head_to_head_percentage" && roster.length === 2 && returns.length === 2 && returns.every(r => r.returnPct !== null)) {
+      const claim = await DB.prepare("UPDATE td_custom_match_settlements SET elo_applied=1,updated_at=datetime('now') WHERE match_id=? AND status='verified' AND elo_applied=0").bind(match.id).run();
+      if ((claim.meta?.changes ?? 0) === 1) {
+        const [one,two] = returns;
+        const [userOne,userTwo] = await Promise.all([
+          DB.prepare("SELECT rating FROM td_users WHERE wallet=?").bind(one.wallet).first<{rating:number}>(),
+          DB.prepare("SELECT rating FROM td_users WHERE wallet=?").bind(two.wallet).first<{rating:number}>(),
+        ]);
+        const ratingOne = userOne?.rating ?? 1000;
+        const ratingTwo = userTwo?.rating ?? 1000;
+        const expectedOne = 1 / (1 + Math.pow(10, (ratingTwo-ratingOne)/400));
+        const expectedTwo = 1 - expectedOne;
+        const scoreOne = Math.abs((one.returnPct ?? 0) - (two.returnPct ?? 0)) < 1e-8 ? 0.5 : (one.returnPct! > two.returnPct! ? 1 : 0);
+        const scoreTwo = 1 - scoreOne;
+        const nextOne = Math.max(0, Math.round(ratingOne + 32 * (scoreOne-expectedOne)));
+        const nextTwo = Math.max(0, Math.round(ratingTwo + 32 * (scoreTwo-expectedTwo)));
+        const draw = scoreOne === 0.5;
+        await DB.batch([
+          DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(nextOne,scoreOne===1?1:0,scoreOne===0?1:0,draw?1:0,one.wallet),
+          DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(nextTwo,scoreTwo===1?1:0,scoreTwo===0?1:0,draw?1:0,two.wallet),
+        ]);
+        eloApplied = true;
+      } else {
+        const existing = await DB.prepare("SELECT elo_applied FROM td_custom_match_settlements WHERE match_id=?").bind(match.id).first<{elo_applied:number}>();
+        eloApplied = existing?.elo_applied === 1;
+      }
+    }
+    return {matchId:match.id,status,teamOneReturnPct:teamOne,teamTwoReturnPct:teamTwo,members:returns,blockers:unique,priceLookupsThisRun:quoteLookups,indexedTransactions:txCount?.count??0,eloApplied,message:status==="verified"?(eloApplied?"Classic percentage result verified; ELO updated exactly once.":"All team members passed the configured historical portfolio reconciliation checks."):"Team scores remain unverified until all historical prices, snapshots, transaction history, transfers, and lifecycle effects are reconciled."};
   });
 
 /** Returns chat messages only to a verified participant in this match. */
@@ -1217,7 +1248,7 @@ export const sendMatchChatMessage = createServerFn({ method: "POST" })
   });
 
 
-const customMatchMode = z.enum(["head_to_head", "head_to_head_percentage", "duo", "group"]);
+const customMatchMode = z.enum(["head_to_head_percentage"]);
 const customMatchVisibility = z.enum(["public", "private"]);
 
 /** Public/private room browser. Private room passwords are never returned to clients. */
@@ -1324,16 +1355,15 @@ export const createCustomMatch = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    const expected = (data.mode === "head_to_head" || data.mode === "head_to_head_percentage") ? 2 : data.mode === "duo" ? 4 : data.maxPlayers;
-    if (data.maxPlayers !== expected || (data.mode === "group" && ![6,8].includes(data.maxPlayers))) {
-      throw new Error("Invalid player limit for the selected match mode.");
+    if (data.mode !== "head_to_head_percentage" || data.maxPlayers !== 2) {
+      throw new Error("TradeDuel currently supports Classic percentage 1v1 only.");
     }
     const password = data.password?.trim() ?? "";
     if (data.visibility === "private" && password.length < 4) throw new Error("Private matches need a password of at least 4 characters.");
     if (data.visibility === "public" && password) throw new Error("Public matches do not use passwords.");
     const id = crypto.randomUUID();
     const passwordHash = data.visibility === "private" ? await hash(password) : null;
-    const team = data.mode === "head_to_head" ? 1 : 1;
+    const team = 1;
     await DB.batch([
       DB.prepare("INSERT INTO td_custom_matches (id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status) VALUES (?,?,?,?,?,?,?,'open')")
         .bind(id,wallet,data.mode,data.visibility,data.maxPlayers,data.durationSeconds,passwordHash),
@@ -1351,6 +1381,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     if (!match) throw new Error("This match does not exist.");
     const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
     if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"Already a member of this match." };
+    if (match.mode !== "head_to_head_percentage" || match.max_players !== 2) throw new Error("Only Classic percentage 1v1 matches are currently available.");
     if (match.status !== "open") throw new Error("This match is no longer open for new players.");
     if (match.visibility === "private") {
       const provided = data.password?.trim() ?? "";
@@ -1358,7 +1389,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     }
     const counts = await DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN team_number=1 THEN 1 ELSE 0 END) AS team_one FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number;team_one:number|null}>();
     if ((counts?.total ?? 0) >= match.max_players) throw new Error("This match is full.");
-    const teamSize = (match.mode === "head_to_head" || match.mode === "head_to_head_percentage") ? 1 : match.max_players / 2;
+    const teamSize = 1;
     const team = (counts?.team_one ?? 0) < teamSize ? 1 : 2;
     await DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(match.id,wallet,team).run();
     const after = await DB.prepare("SELECT COUNT(*) AS total FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number}>();
