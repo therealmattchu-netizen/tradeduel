@@ -1447,6 +1447,17 @@ export const sendCustomMatchChat = createServerFn({ method: "POST" })
 
 
 
+
+export const getCustomMatchResult = createServerFn({ method: "POST" })
+  .validator(z.object({token:z.string().min(24),matchId:z.string().uuid()}))
+  .handler(async ({data})=>{
+    const {DB,wallet}=await requireSession(data.token);
+    const member=await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
+    if(!member)throw new Error("Only match participants can view official results.");
+    const rows=await DB.prepare("SELECT wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome,settled_at FROM td_custom_match_elo_results WHERE match_id=? ORDER BY wallet").bind(data.matchId).all<any>();
+    return {results:rows.results??[],viewerWallet:wallet,verified:(rows.results??[]).length===2};
+  });
+
 /** Signed-in player's verified Classic match history, including immutable before/after ratings. */
 export const getCustomMatchHistory = createServerFn({ method: "POST" })
   .validator(z.object({ token:z.string().min(24), limit:z.number().int().min(1).max(100).optional() }))
