@@ -1899,7 +1899,7 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         const missing=tokenBalances.map(t=>t.mint).filter(mint=>!prices.has(mint)).slice(0,8);
          // The batch endpoint can omit newly launched Pump.fun tokens. Ask DexScreener's
          // per-token endpoint before using the much rougher market-cap/1B display estimate.
-         await Promise.all(stillMissing.map(async mint=>{try{
+         await Promise.all(missing.map(async mint=>{try{
            const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+encodeURIComponent(mint),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});
            if(!response.ok)return;
            const body=await response.json() as {pairs?:Array<Pair&{quoteToken?:{address?:string}} >};
@@ -1909,7 +1909,7 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
          }catch{}}));
          const stillMissing=missing.filter(mint=>!prices.has(mint));
         type PumpCoin={name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string};
-        await Promise.all(missing.map(async mint=>{try{
+        await Promise.all(stillMissing.map(async mint=>{try{
           let coin:PumpCoin|undefined;
           for(const endpoint of ["https://frontend-api-v3.pump.fun/coins-v2/"+encodeURIComponent(mint),"https://frontend-api-v3.pump.fun/coins/"+encodeURIComponent(mint)+"?sync=true"]){
             try{const response=await fetch(endpoint,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});if(response.ok){coin=await response.json() as PumpCoin;break;}}catch{}
