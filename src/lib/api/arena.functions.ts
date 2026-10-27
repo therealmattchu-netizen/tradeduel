@@ -835,7 +835,13 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
               signal: AbortSignal.timeout(4500),
             });
             if (!response.ok) continue;
-            const body = await response.json() as typeof coin;
+            const body = await response.json() as {
+              name?: string; symbol?: string; usd_market_cap?: number | string;
+              market_cap_usd?: number | string; market_cap?: number | string;
+              total_supply?: number | string; total_supply_str?: string;
+              circulating_supply_str?: string; price_usd?: number | string;
+              decimals?: number | string; complete?: boolean;
+            };
             if (body && typeof body === "object") { coin = body; break; }
           } catch { /* Try the compatibility endpoint before leaving the mint unpriced. */ }
         }
