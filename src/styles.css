@@ -1,30 +1,21 @@
-/* Cascade layer order: reset lowest, then Tailwind/Quanta base, then
- * components and finally utilities — so Quanta's q-* utilities (e.g.
- * q-button-*) always win over global element resets. */
+/* Independent TradeDuel styles: no platform design-system stylesheet. */
 @layer reset, theme, base, components, utilities;
 
 @import "tailwindcss" source(none);
 @source "../src";
-@source "../packages/app-landing/src";
-@source "../packages/quanta/src";
-@import "@higgsfield/quanta/tailwind.css";
 
 /* New in-app Quanta-style components (moved out of the quanta package). Their
  * CSS uses Tailwind v4 @utility/@source, so it must load through this tailwind
  * entry. Ordering mirrors quanta's components.css (composer after button;
  * media-card + generation-card after media). */
-@import "./components/composer/composer.css";
-@import "./components/media-card/media-card.css";
-@import "./components/generation-card/generation-card.css";
-@import "./components/setting-trigger/setting-trigger.css";
-@import "./components/prompt-box/prompt-box.css";
-@import "./components/icon-tile/icon-tile.css";
 
 @import "tw-animate-css";
 /* shadcn v4 base (scrollbar/scroll-fade utilities, toast base) for src/components/ui */
 @import "shadcn/tailwind.css";
 
 @custom-variant dark (&:where([data-theme="default-dark"], [data-theme="default-dark"] *));
+
+:root { --td-purple-accent: #a56bff; --td-purple-border: #302052; --td-purple-panel: #0d0a1c; --td-purple-text: #f4efff; --td-purple-accent-soft: rgba(151,76,255,.16); --td-purple-bg: #070612; --td-purple-muted: #b2a4d0; --td-on-accent: #ffffff; --td-bg: #080a0d; --td-text: #f5f7fa; --td-muted: #a4abb6; --td-border: #353b45; --td-accent: #c7f36b; --td-surface: #11151b; --td-surface-raised: #171c24; }
 
 /*
  * Quanta is the visual source of truth. This file imports Quanta's Tailwind
@@ -643,3 +634,79 @@ body { margin: 0; background: var(--td-bg); color: var(--td-white); font-family:
 .td-trade-counts span { padding:7px 9px; border:1px solid #40314D; color:#C5B5D6; font:9px var(--td-mono); }
 .td-trade-counts b { color:#F1E7FB; margin-left:6px; }
 .td-integrity-report a { color:#D6B9FF; text-decoration:underline; }
+
+/* Player profile controls — violet arena system, compact on desktop and mobile. */
+.td-nav-inner { display:flex; align-items:center; gap:18px; }
+.td-nav-inner .td-nav-links { flex:1; justify-content:flex-end; min-width:0; }
+.td-profile-wrap { position:relative; flex:0 0 auto; z-index:80; }
+.td-profile-trigger { display:flex; align-items:center; gap:10px; min-width:0; max-width:220px; padding:7px 10px 7px 7px; border:1px solid rgba(166,107,255,.28); border-radius:12px; color:var(--td-white); background:linear-gradient(145deg,rgba(166,107,255,.12),rgba(24,21,32,.92)); cursor:pointer; text-align:left; transition:border-color .18s ease,background .18s ease; }
+.td-profile-trigger:hover { border-color:rgba(166,107,255,.68); background:rgba(166,107,255,.16); }
+.td-avatar { display:grid; place-items:center; width:34px; height:34px; flex:0 0 34px; overflow:hidden; border:1px solid rgba(191,150,255,.7); border-radius:50%; background:radial-gradient(circle at 30% 20%,#5a3b7a,#21192d 70%); color:#e9d8ff; font:600 14px var(--td-mono); }
+.td-avatar img { width:100%; height:100%; object-fit:cover; }
+.td-profile-trigger-copy { display:flex; flex-direction:column; gap:3px; min-width:0; }
+.td-profile-trigger-copy strong { overflow:hidden; max-width:115px; color:#f5efff; font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
+.td-profile-trigger-copy small { color:#9d8ab9; font:8px var(--td-mono); letter-spacing:.08em; }
+.td-profile-chevron { margin-left:2px; color:#c39aff; }
+.td-profile-popover { position:absolute; top:calc(100% + 12px); right:0; width:min(330px,calc(100vw - 28px)); padding:18px; border:1px solid rgba(166,107,255,.38); border-radius:16px; background:linear-gradient(150deg,#211b2b,#121117 76%); box-shadow:0 24px 80px rgba(0,0,0,.55),0 0 32px rgba(126,65,196,.12); }
+.td-profile-popover-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:16px; }
+.td-profile-popover-head .td-mini-label { color:#bda0e5; font:9px var(--td-mono); letter-spacing:.12em; }
+.td-profile-popover-head button { border:0; color:#a99bb9; background:transparent; font-size:22px; cursor:pointer; }
+.td-profile-editor { display:flex; align-items:center; gap:12px; margin-bottom:14px; padding:12px; border:1px solid rgba(255,255,255,.07); border-radius:12px; background:rgba(255,255,255,.025); }
+.td-avatar-large { width:54px; height:54px; flex-basis:54px; font-size:20px; }
+.td-profile-editor>div { display:flex; flex-direction:column; gap:5px; min-width:0; }
+.td-profile-editor strong { color:#f3eaff; font-size:13px; overflow-wrap:anywhere; }
+.td-profile-editor small { color:#9e91b0; font:10px var(--td-mono); }
+.td-profile-secondary,.td-profile-save { width:100%; padding:11px 12px; border:1px solid rgba(166,107,255,.45); border-radius:9px; background:rgba(166,107,255,.13); color:#eadbff; font-size:12px; cursor:pointer; }
+.td-profile-save { margin-top:12px; border-color:#a66bff; background:linear-gradient(100deg,#a66bff,#8551d6); color:#fff; font-weight:700; }
+.td-profile-secondary:disabled,.td-profile-save:disabled { opacity:.55; cursor:wait; }
+.td-profile-label { display:grid; gap:7px; margin-top:14px; color:#a99ab9; font:9px var(--td-mono); letter-spacing:.08em; }
+.td-profile-label input { width:100%; min-width:0; box-sizing:border-box; padding:11px 12px; border:1px solid #40334e; border-radius:8px; outline:none; background:#100e16; color:#f5efff; font:12px 'Satoshi',Arial,sans-serif; letter-spacing:normal; }
+.td-profile-label input:focus { border-color:#a66bff; box-shadow:0 0 0 3px rgba(166,107,255,.12); }
+.td-profile-help { color:#94889f; font-size:10px; line-height:1.65; margin:12px 0 0; }
+.td-profile-notice { color:#d8baff; font-size:11px; line-height:1.5; margin:12px 0 0; overflow-wrap:anywhere; }
+.td-profile-link { display:block; margin:8px auto 0; padding:4px; border:0; background:transparent; color:#b5a1cc; font-size:10px; cursor:pointer; }
+.td-profile-link:disabled { opacity:.5; }
+@media (max-width:1100px) {
+  .td-nav-inner { gap:10px; }
+  .td-nav-inner .td-nav-links { gap:clamp(10px,1.4vw,18px); }
+  .td-nav-inner .td-nav-links a { font-size:10px; }
+  .td-profile-trigger { padding-right:8px; }
+  .td-profile-trigger-copy { display:none; }
+}
+@media (max-width:760px) {
+  .td-nav-inner { flex-wrap:wrap; }
+  .td-nav-inner .td-nav-links { order:3; flex:1 0 100%; justify-content:flex-start; overflow-x:auto; padding:4px 0 8px; }
+  .td-nav-inner .td-nav-links a { flex:0 0 auto; }
+  .td-profile-wrap { margin-left:auto; }
+  .td-profile-trigger-copy { display:flex; }
+  .td-profile-trigger-copy strong { max-width:90px; }
+}
+
+/* Wallet tracker token portfolio additions, aligned to the dark-violet arena UI. */
+.td-tracker-token-summary { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; padding:18px 28px; border-bottom:1px solid var(--td-line); background:linear-gradient(100deg,rgba(166,107,255,.09),rgba(20,17,27,.1)); }
+.td-tracker-token-summary>div { display:grid; gap:7px; }
+.td-tracker-token-summary>div strong { color:#e9d7ff; font-size:20px; letter-spacing:-.03em; }
+.td-tracker-token-summary>small { color:#a69bb3; font-size:11px; }
+.td-token-position { grid-template-columns:72px minmax(0,1fr) auto; align-items:center; }
+.td-token-position>div { min-width:0; }
+.td-token-position>div strong { display:block; color:#f2eaff; overflow-wrap:anywhere; }
+.td-token-position>div small { display:block; margin-top:5px; overflow-wrap:anywhere; }
+.td-token-position>button { padding:7px 9px; border:1px solid #49365e; border-radius:7px; background:rgba(166,107,255,.08); color:#d9c3f4; font-size:10px; cursor:pointer; }
+.td-tracker-panel .td-tracker-disclaimer { margin:12px 24px; color:#9f95aa; font-size:11px; line-height:1.65; }
+@media (max-width:620px) {
+  .td-tracker-token-summary { padding:16px; }
+  .td-token-position { grid-template-columns:64px minmax(0,1fr); }
+  .td-token-position>button { grid-column:2; justify-self:start; }
+  .td-profile-popover { right:-4px; }
+}
+
+.td-tracker-pnl-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:18px 0}.td-tracker-pnl-grid>div{display:flex;flex-direction:column;gap:8px;padding:18px;border:1px solid rgba(167,139,250,.22);border-radius:14px;background:linear-gradient(135deg,rgba(124,58,237,.12),rgba(15,15,28,.55))}.td-tracker-pnl-grid strong{font-size:clamp(1.25rem,3vw,1.8rem);font-variant-numeric:tabular-nums}.td-tracker-pnl-grid small{color:var(--td-muted,#a6a1b8);font-size:.78rem}.td-pnl-up{color:#6ee7b7!important}.td-pnl-down{color:#fda4af!important}@media(max-width:560px){.td-tracker-pnl-grid{grid-template-columns:1fr}}
+
+/* Shared TradeDuel violet visual system */
+:root{--td-purple-accent:#a56bff;--td-purple-border:#302052;--td-purple-panel:#0d0a1c;--td-purple-text:#f4efff;--td-purple-accent-soft:rgba(151,76,255,.16);--td-purple-bg:#070612;--td-purple-muted:#b2a4d0}
+.td-live-match-purple{--td-accent:var(--td-purple-accent)!important;--td-border:var(--td-purple-border)!important;--td-background:var(--td-purple-bg)!important;--td-foreground:var(--td-purple-text)!important;background:radial-gradient(ellipse at 50% 0%,rgba(126,54,236,.18),transparent 48%),var(--td-purple-bg)!important;color:var(--td-purple-text)!important}
+.td-live-match-purple nav{border-color:rgba(165,107,255,.36)!important}.td-live-match-purple article,.td-live-match-purple section,.td-live-match-purple aside>section,.td-live-match-purple header>div{border-color:rgba(142,88,236,.42)!important;background:linear-gradient(145deg,rgba(17,11,35,.98),rgba(8,7,20,.98))!important;box-shadow:0 10px 30px rgba(0,0,0,.2)}
+.td-live-match-purple button{transition:filter .15s ease,border-color .15s ease}.td-live-match-purple button:hover{filter:brightness(1.16)}
+.td-trading-hero{position:relative;isolation:isolate;min-height:255px;margin:22px 0 28px;overflow:hidden;border:1px solid rgba(166,107,255,.55);border-radius:18px;background:radial-gradient(ellipse at 50% 60%,rgba(114,43,224,.3),transparent 45%),linear-gradient(115deg,#080615,#100921 50%,#080615);box-shadow:inset 0 0 50px rgba(132,61,255,.1),0 16px 45px rgba(0,0,0,.25)}
+.td-trading-grid{position:absolute;inset:0;opacity:.3;background-image:linear-gradient(rgba(166,107,255,.16) 1px,transparent 1px),linear-gradient(90deg,rgba(166,107,255,.16) 1px,transparent 1px);background-size:30px 30px;mask-image:linear-gradient(transparent,#000 20%,#000 80%,transparent);animation:td-grid-drift 18s linear infinite}
+.td-hero-panel{position:absolute;top:30px;width:36%;height:155px;padding:12px;border:1px solid rgba(166,107,255,.72);border-radius:12px;background:linear-gradient(145deg,rgba(34,17,64,.96),rgba(9,7,21,.96));box-shadow:0 0 28px rgba(133,49,255,.18);transform:perspective(650px) rotateY(8deg);animation:td-panel-float 4s ease-in-out infinite}.td-hero-panel>span{font-size:10px;letter-spacing:2px;color:#d4baff}.td-hero-panel-left{left:5%;}.td-hero-panel-right{right:5%;border-color:rgba(83,119,255,.75);transform:perspective(650px) rotateY(-8deg);animation-delay:-2s}.td-hero-chart{height:70px;display:flex;align-items:center;justify-content:space-around;gap:5px;border-bottom:1px solid rgba(165,107,255,.3);margin-top:8px}.td-hero-chart i{display:block;width:5%;height:var(--h,45%);border-radius:2px;background:linear-gradient(#c99cff,#7b35ed);box-shadow:0 0 10px rgba(166,107,255,.4);animation:td-candle 1.7s ease-in-out infinite alternate}.td-hero-chart i:nth-child(3n){--h:76%;animation-delay:-.7s}.td-hero-chart i:nth-child(3n + 1){--h:32%;animation-delay:-1.1s}.td-hero-chart i:nth-child(4n){--h:58%;animation-delay:-.4s}.td-hero-chart-cyan i{background:linear-gradient(#a6c8ff,#4e64ff)}.td-hero-line{height:3px;margin-top:9px;background:linear-gradient(90deg,transparent,#c08aff,#8b42ff,transparent);filter:drop-shadow(0 0 5px #9a4dff);animation:td-line-pulse 2s ease-in-out infinite}.td-hero-line-cyan{background:linear-gradient(90deg,transparent,#67dcff,#657aff,transparent)}.td-hero-versus{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);display:grid;place-items:center;width:64px;height:64px;border:1px solid #c39aff;border-radius:18px;background:rgba(22,10,45,.95);color:#f5eaff;font-size:23px;font-weight:900;font-style:italic;box-shadow:0 0 32px rgba(149,66,255,.7);animation:td-versus-pulse 2.4s ease-in-out infinite}.td-hero-footer{position:absolute;bottom:17px;left:0;right:0;display:flex;justify-content:center;gap:18px;flex-wrap:wrap;font-size:10px;letter-spacing:2px;color:#c7b5e8}.td-hero-footer b{color:#d9b8ff}.td-hero-footer b:first-letter{color:#39e7b0}@keyframes td-grid-drift{to{background-position:30px 30px}}@keyframes td-panel-float{0%,100%{translate:0 0}50%{translate:0 -5px}}@keyframes td-candle{to{scale:1 .72;transform-origin:bottom}}@keyframes td-line-pulse{50%{opacity:.55}}@keyframes td-versus-pulse{50%{box-shadow:0 0 45px rgba(149,66,255,.95);scale:1.05}}@media(max-width:640px){.td-trading-hero{min-height:205px}.td-hero-panel{top:24px;width:40%;height:125px;padding:8px}.td-hero-panel-left{left:3%}.td-hero-panel-right{right:3%}.td-hero-chart{height:52px}.td-hero-versus{width:48px;height:48px;font-size:18px}.td-hero-footer{gap:8px;font-size:8px;letter-spacing:1px}}

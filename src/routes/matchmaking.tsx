@@ -1,5 +1,34 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { SiteShell, PageHero } from "@/components/site-shell";
+import { CustomMatchBrowser } from "@/components/custom-match-browser";
 import { WalletArena } from "@/components/wallet-arena";
-export const Route = createFileRoute("/matchmaking")({ head: () => ({ meta: [{ title: "Matchmaking | TradeDuel" }, { name: "description", content: "Learn about the planned TradeDuel head-to-head trading match system." }] }), component: Matchmaking });
-function Matchmaking() { return <SiteShell active="matchmaking"><PageHero eyebrow="MATCHMAKING · ALPHA" title="Find your" accent="opponent." description="Connect your Phantom wallet, verify ownership with a signed message, and try the early practice queue. Live Pump.fun trade scoring remains under development."/><section className="td-match-layout"><div className="td-match-card"><WalletArena /><div className="td-match-card-head"><span className="td-mini-label">DUEL CONFIGURATION</span><span className="td-status-pill"><i/> PRACTICE QUEUE</span></div><div className="td-vs-stage"><div className="td-player-placeholder"><span className="td-player-icon"><img src="/brand-mark-exact.png" alt=""/></span><span>PLAYER ONE</span><strong>—</strong><small>Awaiting launch</small></div><div className="td-versus">VS</div><div className="td-player-placeholder"><span className="td-player-icon td-player-ghost">?</span><span>OPPONENT</span><strong>—</strong><small>Awaiting launch</small></div></div><div className="td-match-options"><div><span>FORMAT</span><strong>Head-to-head</strong></div><div><span>DURATION</span><strong>To be announced</strong></div><div><span>ENTRY FEE</span><strong>None planned</strong></div></div><p className="td-fineprint">Practice matchmaking can pair connected wallets, but this early version does not track trading activity, settle match results, or change ELO. Never share a seed phrase.</p></div><aside className="td-match-aside"><p className="td-overline">HOW A DUEL SHOULD WORK</p><h2>Competition without the guesswork.</h2><div className="td-aside-step"><span>01</span><div><h3>Verify your wallet</h3><p>Prove ownership through a wallet signature, never by sharing secret keys.</p></div></div><div className="td-aside-step"><span>02</span><div><h3>Agree on the rules</h3><p>Eligible assets, match timing, scoring, and fee treatment must be clear before a match starts.</p></div></div><div className="td-aside-step"><span>03</span><div><h3>Review the result</h3><p>Publish a result only after both sides' eligible activity can be checked consistently.</p></div></div></aside></section><section className="td-callout"><img src="/brand-mark-exact.png" alt=""/><div><p className="td-overline">BUILT ON TRUST</p><h2>No wagers. No custody. No fake stats.</h2><p>The planned experience is about competitive performance, not betting against another user or handing control of funds to TradeDuel.</p></div></section></SiteShell> }
+
+export const Route = createFileRoute("/matchmaking")({
+  head: () => ({
+    meta: [
+      { title: "Matchmaking | TradeDuel" },
+      {
+        name: "description",
+        content: "Choose a TradeDuel game mode, find a public match, or create a private lobby.",
+      },
+    ],
+  }),
+  component: Matchmaking,
+});
+
+function Matchmaking() {
+  return (
+    <SiteShell active="matchmaking">
+      <PageHero
+        eyebrow="MATCHMAKING"
+        title="Choose your"
+        accent="arena."
+        description="Choose your ruleset, pick your team size, then jump into a public duel or create a password-protected private arena."
+      />
+      <section className="td-match-layout" style={{ display: "block", "--td-accent":"var(--td-purple-accent)", "--td-border":"var(--td-purple-border)", "--td-panel":"var(--td-purple-panel)", "--td-text":"var(--td-purple-text)", "--td-accent-soft":"var(--td-purple-accent-soft)", "--td-bg":"var(--td-purple-bg)", "--td-muted":"var(--td-purple-muted)" } as React.CSSProperties}>
+        <WalletArena authOnly />
+        <div className="td-trading-hero" aria-label="Animated trading duel illustration"><div className="td-trading-grid" /><div className="td-hero-panel td-hero-panel-left"><span>PORTFOLIO / A</span><div className="td-hero-chart"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div><div className="td-hero-line"/></div><div className="td-hero-panel td-hero-panel-right"><span>PORTFOLIO / B</span><div className="td-hero-chart td-hero-chart-cyan"><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/><i/></div><div className="td-hero-line td-hero-line-cyan"/></div><div className="td-hero-versus">VS</div><div className="td-hero-footer"><b>● LIVE MARKETS</b><span>REAL-TIME DUELS</span><span>SOLANA</span></div></div><CustomMatchBrowser />
+      </section>
+    </SiteShell>
+  );
+}

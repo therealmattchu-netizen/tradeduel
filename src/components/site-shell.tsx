@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
+import { PlayerProfileMenu } from "@/components/player-profile-menu";
 
 export function SwordsMark({ size = 30 }: { size?: number }) {
   return <img className="td-swords-mark" src="/brand-mark-exact.png" width={size} height={size} alt="" aria-hidden="true" />;
@@ -8,7 +9,7 @@ export function SwordsMark({ size = 30 }: { size?: number }) {
 export function SiteShell({ children, active }: { children: ReactNode; active?: string }) {
   return <main className="td-site td-inner-site">
     <header className="td-nav td-nav-inner">
-      <Link className="td-brand" to="/" aria-label="TradeDuel home"><span className="td-mark"><SwordsMark size={34} /></span><span>TRADEDUEL</span></Link>
+      <Link className="td-brand" to="/" aria-label="TradeDuel home"><span className="td-mark"><SwordsMark size={31} /></span><img className="td-wordmark" src="/brand-wordmark.svg" alt="TradeDuel" /></Link>
       <nav className="td-nav-links" aria-label="Main navigation">
         <Link className={active === "matchmaking" ? "td-current" : ""} to="/matchmaking">Matchmaking</Link>
         <Link className={active === "spectate" ? "td-current" : ""} to="/spectate">Spectate</Link>
@@ -19,9 +20,10 @@ export function SiteShell({ children, active }: { children: ReactNode; active?: 
         <Link className={active === "faq" ? "td-current" : ""} to="/faq">FAQ</Link>
         <Link className="td-nav-cta" to="/matchmaking">Enter the arena <span>↗</span></Link>
       </nav>
+      <PlayerProfileMenu />
     </header>
     <div className="td-inner-content">{children}</div>
-    <footer className="td-footer"><Link className="td-brand" to="/"><span className="td-mark"><SwordsMark size={27} /></span><span>TRADEDUEL</span></Link><p>Competitive trading arena. In development.</p><span className="td-footer-note">NOT FINANCIAL ADVICE. CRYPTO TRADING INVOLVES RISK.</span></footer>
+    <footer className="td-footer"><Link className="td-brand" to="/"><span className="td-mark"><SwordsMark size={27} /></span><img className="td-wordmark" src="/brand-wordmark.svg" alt="TradeDuel" /></Link><p>Competitive trading arena. Built around transparent rules.</p><span className="td-footer-note">NOT FINANCIAL ADVICE. CRYPTO TRADING INVOLVES RISK.</span></footer>
   </main>;
 }
 
