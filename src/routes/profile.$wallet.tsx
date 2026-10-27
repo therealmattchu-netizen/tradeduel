@@ -38,7 +38,7 @@ function PlayerProfile() {
       <section className="td-data-panel">
         {loading ? <p>Loading profile…</p> : error ? <div role="alert"><h2>Profile unavailable</h2><p>{error}</p><button type="button" onClick={() => { setLoading(true); setError(""); void getPublicPlayerProfile({ data: { wallet } }).then(setData).catch((reason) => setError(reason instanceof Error ? reason.message : "Could not load this player's profile.")).finally(() => setLoading(false)); }}>Try again</button></div> : !profile ? <div><h2>Profile not found</h2><p>This wallet has not created a TradeDuel profile yet.</p><code>{wallet}</code></div> : <>
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-            {profile.avatarDataUrl ? <img src={profile.avatarDataUrl} alt="" style={{ width: 84, height: 84, borderRadius: "50%", objectFit: "cover" }} /> : <img src="/brand-mark-exact.png" alt="" style={{ width: 84, height: 84 }} />}
+            {profile.avatarDataUrl ? <img src={profile.avatarDataUrl} alt="" style={{ width: 84, height: 84, borderRadius: "50%", objectFit: "cover" }} /> : <img src="/brand-mark.svg" alt="" style={{ width: 84, height: 84 }} />}
             <div><h2 style={{ margin: "0 0 6px" }}>{profile.displayName || short(profile.wallet)}</h2><code>{profile.wallet}</code><p><strong>{profile.rating} ELO</strong></p></div>
           </div>
           <div className="td-spectator-stats td-global-stats">
