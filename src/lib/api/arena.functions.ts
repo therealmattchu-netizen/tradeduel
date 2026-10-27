@@ -1432,9 +1432,9 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
         openValueSol+=(qty*tokenPrice)/solPrice;
       }
       if(openPositionUnpriced) blockers.push("eligible_open_position_historical_price_missing:"+member.wallet);
-      if(eligibleBuys===0||investedSol<=0) blockers.push("no_eligible_post_start_buys:"+member.wallet);
+      // A fully indexed player who made no eligible buys has a defined 0.00% return, not a missing result.
       const pnlSol=realizedPnlSol+openValueSol-remainingCostSol;
-      const pct=eligibleBuys>0&&investedSol>0&&!ambiguousTrade&&!unmatchedEligibleSell&&!openPositionUnpriced?pnlSol/investedSol*100:null;
+      const pct=eligibleBuys===0&&!ambiguousTrade&&!unmatchedEligibleSell&&!openPositionUnpriced?0:eligibleBuys>0&&investedSol>0&&!ambiguousTrade&&!unmatchedEligibleSell&&!openPositionUnpriced?pnlSol/investedSol*100:null;
       returns.push({wallet:member.wallet,team:member.team_number,startUsd:start?.portfolio_usd??null,endUsd:end?.portfolio_usd??null,returnPct:pct});
       const index=await DB.prepare("SELECT exhausted FROM td_match_index_state WHERE match_id=? AND wallet=?").bind(match.id,member.wallet).first<{exhausted:number}>();
       if(!index||index.exhausted!==1) blockers.push("transaction_history_not_fully_indexed:"+member.wallet);
