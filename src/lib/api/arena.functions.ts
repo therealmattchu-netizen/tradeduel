@@ -127,7 +127,7 @@ export const verifyWalletChallenge = createServerFn({ method: "POST" }).validato
 export const getMyRating = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24) })).handler(async ({ data }) => {
   const { DB, wallet } = await requireSession(data.token);
   const row = await DB.prepare("SELECT rating, wins, losses, draws FROM td_users WHERE wallet = ?").bind(wallet).first<{ rating: number; wins: number; losses: number; draws: number }>();
-  return { wallet, rating: row?.rating ?? 1000, wins: row?.wins ?? 0, losses: row?.losses ?? 0, draws: row?.draws ?? 0, eloActive: false };
+  return { wallet, rating: row?.rating ?? 1000, wins: row?.wins ?? 0, losses: row?.losses ?? 0, draws: row?.draws ?? 0, eloActive: true };
 });
 
 export const getLeaderboard = createServerFn({ method: "GET" }).handler(async () => {
@@ -1149,10 +1149,7 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
     const roster = members.results ?? [];
     if (!roster.some(m=>m.wallet===wallet)) throw new Error("Only room members can reconcile this match.");
     const blockers:string[]=[];
-    // Safety gate: the legacy settlement formula below compares whole-wallet start/end snapshots.
-    // That wrongly counts pre-match holdings and their price movement, so it must never award ELO.
-    // Keep results pending until server-side trade-level P&L reconciliation is the source of returns.
-    blockers.push("eligible_trade_pnl_server_reconciliation_required");
+    // Score only detected post-start swap candidates, after accounting for pre-match inventory.
     if (match.status!=="completed" || !match.ends_at || new Date(match.ends_at).getTime()>Date.now()) blockers.push("match_not_expired");
     if (roster.length!==match.max_players) blockers.push("incomplete_roster");
     if (!match.started_at || !match.ends_at) blockers.push("match_boundaries_missing");
@@ -1192,11 +1189,75 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
       const start=rows.find(r=>r.wallet===member.wallet&&r.phase==="start");
       const end=rows.find(r=>r.wallet===member.wallet&&r.phase==="end");
       for(const [phase,row] of [["start",start],["end",end]] as const) {
-        if(!row||!row.complete||row.portfolio_usd===null) blockers.push("missing_or_incomplete_snapshot:"+member.wallet+":"+phase);
+        if(!row) blockers.push("missing_snapshot:"+member.wallet+":"+phase);
         const boundary=phase==="start"?match.started_at:match.ends_at;
         if(row&&boundary&&Math.abs(row.observed_at-Math.floor(new Date(boundary).getTime()/1000))>120) blockers.push("snapshot_outside_120_second_boundary:"+member.wallet+":"+phase);
       }
-      const pct=start?.complete&&end?.complete&&start.portfolio_usd!==null&&end.portfolio_usd!==null&&start.portfolio_usd>0?((end.portfolio_usd-start.portfolio_usd)/start.portfolio_usd)*100:null;
+      const startSnapshot=(snapshots.results??[]).find(row=>row.wallet===member.wallet&&row.phase==="start");
+      const endSnapshot=(snapshots.results??[]).find(row=>row.wallet===member.wallet&&row.phase==="end");
+      let initialInventory=new Map<string,number>();
+      try {
+        const startBalances=JSON.parse(startSnapshot?.token_balances_json??"[]") as Array<{mint:string;amount:number}>;
+        initialInventory=new Map(startBalances.map(t=>[t.mint,Math.max(0,Number(t.amount)||0)]));
+      } catch { blockers.push("invalid_start_inventory:"+member.wallet); }
+      if(!startSnapshot) blockers.push("missing_start_inventory:"+member.wallet);
+      if(!endSnapshot) blockers.push("missing_end_mark:"+member.wallet);
+      const startSec=Math.floor(new Date(match.started_at!).getTime()/1000);
+      const endSec=Math.floor(new Date(match.ends_at!).getTime()/1000);
+      const trades=await DB.prepare("SELECT block_time,token_mint,token_delta,sol_delta_net,direction FROM td_swap_fill_candidates WHERE match_id=? AND wallet=? AND block_time>=? AND block_time<=? ORDER BY block_time ASC,signature ASC")
+        .bind(match.id,member.wallet,startSec,endSec).all<{block_time:number;token_mint:string;token_delta:number;sol_delta_net:number;direction:string}>();
+      const lots=new Map<string,Array<{qty:number;costSol:number}>>();
+      let investedSol=0,realizedPnlSol=0,eligibleBuys=0,ambiguousTrade=false,unmatchedEligibleSell=false;
+      for(const trade of trades.results??[]) {
+        const qty=Math.abs(Number(trade.token_delta)),flowSol=Math.abs(Number(trade.sol_delta_net));
+        if(trade.direction==="ambiguous_candidate" || !Number.isFinite(qty) || qty<=0 || !Number.isFinite(flowSol) || flowSol<=0) {
+          ambiguousTrade=true;
+          continue;
+        }
+        const stack=lots.get(trade.token_mint)??[];
+        if(trade.direction==="buy_candidate" && trade.token_delta>0) {
+          stack.push({qty,costSol:flowSol});
+          lots.set(trade.token_mint,stack);
+          investedSol+=flowSol;
+          eligibleBuys++;
+          continue;
+        }
+        if(trade.direction!=="sell_candidate" || trade.token_delta>=0) { ambiguousTrade=true; continue; }
+        let remaining=qty;
+        const preMatchQty=initialInventory.get(trade.token_mint)??0;
+        const consumedPreMatch=Math.min(remaining,preMatchQty);
+        initialInventory.set(trade.token_mint,preMatchQty-consumedPreMatch);
+        remaining-=consumedPreMatch;
+        let costBasis=0,matchedQty=0;
+        while(remaining>1e-12&&stack.length) {
+          const lot=stack[0],taken=Math.min(remaining,lot.qty),ratio=taken/lot.qty,basis=lot.costSol*ratio;
+          costBasis+=basis;lot.qty-=taken;lot.costSol-=basis;remaining-=taken;matchedQty+=taken;
+          if(lot.qty<=1e-12)stack.shift();
+        }
+        if(remaining>1e-8) unmatchedEligibleSell=true;
+        const eligibleProceeds=qty>0?flowSol*(matchedQty/qty):0;
+        realizedPnlSol+=eligibleProceeds-costBasis;
+        lots.set(trade.token_mint,stack);
+      }
+      if(ambiguousTrade) blockers.push("ambiguous_swap_candidate:"+member.wallet);
+      if(unmatchedEligibleSell) blockers.push("sell_exceeds_match_eligible_inventory:"+member.wallet);
+      const endPrices=await DB.prepare("SELECT mint,price_usd,accepted FROM td_match_historical_price_evidence WHERE match_id=? AND wallet=? AND phase='end'")
+        .bind(match.id,member.wallet).all<{mint:string;price_usd:number|null;accepted:number}>();
+      const priceByMint=new Map((endPrices.results??[]).filter(p=>p.accepted===1&&p.price_usd!==null&&Number.isFinite(p.price_usd)&&p.price_usd>0).map(p=>[p.mint,p.price_usd as number]));
+      const solPrice=priceByMint.get("So11111111111111111111111111111111111111112");
+      let openValueSol=0,remainingCostSol=0,openPositionUnpriced=false;
+      for(const [mint,stack] of lots) {
+        const qty=stack.reduce((sum,lot)=>sum+lot.qty,0);
+        remainingCostSol+=stack.reduce((sum,lot)=>sum+lot.costSol,0);
+        if(qty<=1e-12) continue;
+        const tokenPrice=priceByMint.get(mint);
+        if(tokenPrice===undefined||solPrice===undefined||solPrice<=0) { openPositionUnpriced=true; continue; }
+        openValueSol+=(qty*tokenPrice)/solPrice;
+      }
+      if(openPositionUnpriced) blockers.push("eligible_open_position_historical_price_missing:"+member.wallet);
+      if(eligibleBuys===0||investedSol<=0) blockers.push("no_eligible_post_start_buys:"+member.wallet);
+      const pnlSol=realizedPnlSol+openValueSol-remainingCostSol;
+      const pct=eligibleBuys>0&&investedSol>0&&!ambiguousTrade&&!unmatchedEligibleSell&&!openPositionUnpriced?pnlSol/investedSol*100:null;
       returns.push({wallet:member.wallet,team:member.team_number,startUsd:start?.portfolio_usd??null,endUsd:end?.portfolio_usd??null,returnPct:pct});
       const index=await DB.prepare("SELECT exhausted FROM td_match_index_state WHERE match_id=? AND wallet=?").bind(match.id,member.wallet).first<{exhausted:number}>();
       if(!index||index.exhausted!==1) blockers.push("transaction_history_not_fully_indexed:"+member.wallet);
@@ -1209,9 +1270,6 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
     for(const flow of flows.results??[]) if(flow.count>0) blockers.push("external_flow_requires_reconciliation:"+flow.classification);
     const lifecycle=await DB.prepare("SELECT COUNT(*) AS count FROM td_match_instruction_evidence WHERE match_id=? AND classification='token_account_lifecycle'").bind(match.id).first<{count:number}>();
     if((lifecycle?.count??0)>0) blockers.push("token_account_rent_or_lifecycle_effects_unresolved");
-    const prices=await DB.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN accepted=0 THEN 1 ELSE 0 END) AS rejected FROM td_match_historical_price_evidence WHERE match_id=?").bind(match.id).first<{total:number;rejected:number|null}>();
-    if(!prices?.total) blockers.push("historical_price_source_provenance_missing");
-    if((prices?.rejected??0)>0) blockers.push("one_or_more_historical_price_quotes_failed_quality_checks");
     const teamScore=(team:number)=>{const values=returns.filter(r=>r.team===team);return values.length>0&&values.every(r=>r.returnPct!==null)?values.reduce((sum,r)=>sum+(r.returnPct??0),0)/values.length:null;};
     const teamOne=teamScore(1),teamTwo=teamScore(2);
     const priorSettlement=await DB.prepare("SELECT elo_applied FROM td_custom_match_settlements WHERE match_id=?").bind(match.id).first<{elo_applied:number}>(); const status=priorSettlement?.elo_applied===1?"verified":blockers.length?"review_required":"verified";
