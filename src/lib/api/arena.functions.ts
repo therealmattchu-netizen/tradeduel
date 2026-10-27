@@ -1852,7 +1852,8 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
     const wrappedSol="So11111111111111111111111111111111111111112";
     const errors:string[]=[];
     for (const ownerWallet of participants) {
-      const linked = await DB.prepare("SELECT trading_wallet FROM td_trading_wallets WHERE owner_wallet=?").bind(ownerWallet).first<{trading_wallet:string}>();
+      let linked: {trading_wallet:string} | null = null;
+      try { linked = await DB.prepare("SELECT trading_wallet FROM td_trading_wallets WHERE owner_wallet=?").bind(ownerWallet).first<{trading_wallet:string}>(); } catch { /* Older deployments can still refresh the connected wallet until the migration is applied. */ }
       const trackedWallet = linked?.trading_wallet ?? ownerWallet;
       try {
         const previous=await DB.prepare("SELECT observed_at FROM td_match_valuation_observations WHERE match_id=? AND wallet=? ORDER BY observed_at DESC LIMIT 1").bind(data.matchId,ownerWallet).first<{observed_at:number}>();
