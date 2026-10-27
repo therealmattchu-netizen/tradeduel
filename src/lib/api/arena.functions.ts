@@ -668,6 +668,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     await DB.prepare("INSERT OR IGNORE INTO td_match_events (match_id,wallet,signature,block_time,slot,success,pump_fun_related,sol_delta,token_deltas_json,event_type) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(match.id,ownerWallet,sig.signature,sig.block_time,sig.slot,signatureFailed?0:1,pumpRelated?1:0,(postSol-preSol)/1e9,JSON.stringify(tokenDeltas),eventType).run();
     // Persist a clearly labelled swap candidate during automatic indexing. This is
     // inferred from token deltas + Pump.fun instruction logs, not a protocol fill receipt.
+    // [deploy-production] Ship the live token P&L candidate-indexing repair.
     // Aggregate wallet deltas by mint before classifying a swap. Transactions can
     // touch multiple token accounts for the same mint (including temporary/closed
     // accounts); requiring tokenDeltas.length === 1 silently dropped valid buys.
