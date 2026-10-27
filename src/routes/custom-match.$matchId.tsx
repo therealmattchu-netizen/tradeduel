@@ -45,13 +45,21 @@ function CustomLiveMatch(){
  const scored=useMemo(()=>members.map(m=>{
   const startSec=room?.startedAt?Math.floor(new Date(room.startedAt).getTime()/1000):null;
   const endSec=room?.endsAt?Math.floor(new Date(room.endsAt).getTime()/1000):null;
-  const playerObservations=observations.filter(o=>o.wallet===m.wallet&&o.complete&&o.portfolio_usd!==null&&Number.isFinite(o.portfolio_usd)).sort((a,b)=>a.observed_at-b.observed_at);
+  const playerObservations=observations.filter(o=>o.wallet===m.wallet&&Array.isArray(o.tokenBalances)).sort((a,b)=>a.observed_at-b.observed_at);
   const latestObservation=playerObservations.filter(o=>(startSec===null||o.observed_at>=startSec)&&(endSec===null||o.observed_at<=endSec)).at(-1);
   const latestTokens=latestObservation?.tokenBalances??[];
   const solMint="So11111111111111111111111111111111111111112";
   const solPrice=latestTokens.find(t=>t.mint===solMint)?.priceUsd??null;
   const candidates=fillCandidates.filter(t=>t.wallet===m.wallet&&startSec!==null&&t.block_time!==null&&t.block_time>=startSec&&(endSec===null||t.block_time<=endSec)&&(t.direction==="buy_candidate"||t.direction==="sell_candidate")).sort((a,b)=>(a.block_time??0)-(b.block_time??0));
   const lots=new Map<string,Array<{qty:number;costSol:number}>>();
+  // Use the match-start inventory snapshot to ensure a sell of a pre-existing
+  // holding is consumed before any match-eligible buy lot.
+  const startSnapshot=(activity?.valuations??[]).find((row:any)=>row.wallet===m.wallet&&row.phase==="start");
+  let initialInventory=new Map<string,number>();
+  try {
+    const balances=JSON.parse(startSnapshot?.token_balances_json??"[]") as Array<{mint:string;amount:number}>;
+    initialInventory=new Map(balances.map(t=>[t.mint,Math.max(0,Number(t.amount)||0)]));
+  } catch { /* Live display remains provisional; server settlement will fail closed. */ }
   let totalBuyCostSol=0,realizedPnlSol=0,eligibleBuyCount=0,eligibleSellCount=0,unmatchedSell=false;
   for(const trade of candidates){
     const qty=Math.abs(Number(trade.token_delta)),flowSol=Math.abs(Number(trade.sol_delta_net));
@@ -60,14 +68,21 @@ function CustomLiveMatch(){
     if(trade.direction==="buy_candidate"&&trade.token_delta>0){
       stack.push({qty,costSol:flowSol});lots.set(trade.token_mint,stack);totalBuyCostSol+=flowSol;eligibleBuyCount++;
     } else if(trade.direction==="sell_candidate"&&trade.token_delta<0){
-      let remaining=qty,costBasis=0;
+      let remaining=qty,costBasis=0,matchedQty=0;
+      const preMatchQty=initialInventory.get(trade.token_mint)??0;
+      const consumedPreMatch=Math.min(remaining,preMatchQty);
+      initialInventory.set(trade.token_mint,preMatchQty-consumedPreMatch);
+      remaining-=consumedPreMatch;
       while(remaining>1e-12&&stack.length){
         const lot=stack[0],taken=Math.min(remaining,lot.qty),ratio=taken/lot.qty,basis=lot.costSol*ratio;
-        costBasis+=basis;lot.qty-=taken;lot.costSol-=basis;remaining-=taken;
+        costBasis+=basis;lot.qty-=taken;lot.costSol-=basis;remaining-=taken;matchedQty+=taken;
         if(lot.qty<=1e-12)stack.shift();
       }
       if(remaining>1e-8)unmatchedSell=true;
-      realizedPnlSol+=flowSol-costBasis;eligibleSellCount++;lots.set(trade.token_mint,stack);
+      const eligibleProceeds=qty>0?flowSol*(matchedQty/qty):0;
+      realizedPnlSol+=eligibleProceeds-costBasis;
+      if(matchedQty>0)eligibleSellCount++;
+      lots.set(trade.token_mint,stack);
     } else unmatchedSell=true;
   }
   let openValueSol=0,unpricedOpenLots=false,remainingCostSol=0;
@@ -88,7 +103,7 @@ function CustomLiveMatch(){
   }
   const hasAmbiguousActivity=((activity?.events??[]) as Array<{wallet:string;block_time:number|null;event_type:string}>).some(e=>e.wallet===m.wallet&&e.block_time!==null&&startSec!==null&&e.block_time>=startSec&&(!["pump_fun_buy_candidate","pump_fun_sell_candidate"].includes(e.event_type)))||((activity?.events??[]).length>=60)||((activity?.accountingLedger??[]).length>=100);
   const pnlSol=realizedPnlSol+openValueSol-remainingCostSol;
-  const pct=eligibleBuyCount>0&&totalBuyCostSol>0&&!unmatchedSell&&!hasAmbiguousActivity?pnlSol/totalBuyCostSol*100:null;
+  const pct=eligibleBuyCount>0&&totalBuyCostSol>0&&!unmatchedSell?pnlSol/totalBuyCostSol*100:null;
   const change=pct!==null&&solPrice!==null?pnlSol*solPrice:null;
   const last=latestObservation?{observed_at:latestObservation.observed_at,portfolio_usd:latestObservation.portfolio_usd}:undefined;
   return {...m,first:undefined,last,change,pct,samples:candidates.length,baselineValid:eligibleBuyCount>0&&pct!==null,baselineSource:pct!==null?"eligible_post_start_trades":"eligible_trade_data_pending",eligibleBuyCount,eligibleSellCount,unpricedOpenLots};
