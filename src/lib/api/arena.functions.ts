@@ -1782,3 +1782,51 @@ export const updateMyProfile = createServerFn({ method: "POST" })
       .bind(wallet).first<{wallet:string;display_name:string|null;avatar_data_url:string|null}>();
     return { wallet, displayName: row?.display_name ?? "", avatarDataUrl: row?.avatar_data_url ?? null, message: "Profile saved." };
   });
+
+
+/** Create a short-lived challenge for a separate trading address. The connected wallet remains the account identity. */
+export const createTradingWalletChallenge = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), tradingWallet: z.string().regex(WALLET_RE) }))
+  .handler(async ({ data }) => {
+    const { DB, wallet: ownerWallet } = await requireSession(data.token);
+    if (data.tradingWallet === ownerWallet) throw new Error("Your connected wallet is already your trading wallet.");
+    const alreadyUsed = await DB.prepare("SELECT owner_wallet FROM td_trading_wallets WHERE trading_wallet = ?").bind(data.tradingWallet).first<{owner_wallet:string}>();
+    if (alreadyUsed && alreadyUsed.owner_wallet !== ownerWallet) throw new Error("This trading wallet is already linked to another TradeDuel account.");
+    const nonce = crypto.randomUUID();
+    const domain = bindings().TRADEDUEL_WALLET_DOMAIN?.trim().toLowerCase();
+    if (!domain || !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)) throw new Error("Wallet verification is not configured for this deployment.");
+    const expiresAt = Math.floor(Date.now()/1000)+300;
+    const message = `TradeDuel trading wallet verification\nDomain: ${domain}\nAccount wallet: ${ownerWallet}\nTrading wallet: ${data.tradingWallet}\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}\nExpiration Time: ${new Date(expiresAt*1000).toISOString()}\n\nThis signature links this public trading address to your TradeDuel account. It does not authorize transactions or transfer funds.`;
+    await DB.prepare("INSERT INTO td_trading_wallet_challenges (nonce, owner_wallet, trading_wallet, message, expires_at) VALUES (?,?,?,?,?)").bind(nonce,ownerWallet,data.tradingWallet,message,expiresAt).run();
+    return { nonce, message, expiresAt };
+  });
+
+/** Verify the signature made by the trading wallet itself; never accept a pasted address as proof. */
+export const verifyTradingWallet = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), tradingWallet: z.string().regex(WALLET_RE), nonce: z.string().uuid(), signature: z.string().min(80).max(200) }))
+  .handler(async ({ data }) => {
+    const { DB, wallet: ownerWallet } = await requireSession(data.token);
+    const challenge = await DB.prepare("SELECT message,expires_at,used FROM td_trading_wallet_challenges WHERE nonce=? AND owner_wallet=? AND trading_wallet=?").bind(data.nonce,ownerWallet,data.tradingWallet).first<{message:string;expires_at:number;used:number}>();
+    if (!challenge || challenge.used || challenge.expires_at < Math.floor(Date.now()/1000)) throw new Error("Trading-wallet verification expired. Please try again.");
+    let valid = false;
+    try {
+      const publicKey = base58Decode(data.tradingWallet), signature = base64ToBytes(data.signature);
+      if (publicKey.length !== 32 || signature.length !== 64) throw new Error("Invalid key or signature length");
+      valid = await crypto.subtle.verify({name:"Ed25519"}, await crypto.subtle.importKey("raw",new Uint8Array(publicKey).buffer as ArrayBuffer,{name:"Ed25519"},false,["verify"]),new Uint8Array(signature).buffer as ArrayBuffer,new TextEncoder().encode(challenge.message).buffer as ArrayBuffer);
+    } catch { valid = false; }
+    if (!valid) throw new Error("The signature does not prove control of that trading wallet. Connect the wallet that matches the pasted address and sign again.");
+    const consumed = await DB.prepare("UPDATE td_trading_wallet_challenges SET used=1 WHERE nonce=? AND owner_wallet=? AND used=0 AND expires_at>=?").bind(data.nonce,ownerWallet,Math.floor(Date.now()/1000)).run();
+    if ((consumed.meta?.changes ?? 0)!==1) throw new Error("This verification challenge was already used or expired.");
+    const conflict = await DB.prepare("SELECT owner_wallet FROM td_trading_wallets WHERE trading_wallet=?").bind(data.tradingWallet).first<{owner_wallet:string}>();
+    if (conflict && conflict.owner_wallet!==ownerWallet) throw new Error("This trading wallet is already linked to another TradeDuel account.");
+    await DB.prepare("INSERT INTO td_trading_wallets (owner_wallet,trading_wallet,verified_at,updated_at) VALUES (?,?,datetime('now'),datetime('now')) ON CONFLICT(owner_wallet) DO UPDATE SET trading_wallet=excluded.trading_wallet,verified_at=datetime('now'),updated_at=datetime('now')").bind(ownerWallet,data.tradingWallet).run();
+    return { verified:true, ownerWallet, tradingWallet:data.tradingWallet, message:"Trading wallet ownership verified." };
+  });
+
+export const getMyTradingWallet = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24) }))
+  .handler(async ({ data }) => {
+    const { DB, wallet: ownerWallet } = await requireSession(data.token);
+    const row = await DB.prepare("SELECT trading_wallet,verified_at FROM td_trading_wallets WHERE owner_wallet=?").bind(ownerWallet).first<{trading_wallet:string;verified_at:string}>();
+    return { ownerWallet, tradingWallet:row?.trading_wallet??null, verifiedAt:row?.verified_at??null };
+  });
