@@ -1777,11 +1777,11 @@ export const getCustomMatchHistory = createServerFn({ method: "POST" })
   .handler(async ({data})=>{
     const {DB,wallet}=await requireSession(data.token);
     const rows=await DB.prepare(`SELECT m.id AS match_id, mine.wallet,
-      COALESCE(r.opponent_wallet, (
+      COALESCE((
         SELECT other.wallet FROM td_custom_match_members other
         WHERE other.match_id=m.id AND other.wallet<>mine.wallet
         ORDER BY other.team_number,other.wallet LIMIT 1
-      )) AS opponent_wallet,
+      ), CASE WHEN r.opponent_wallet<>mine.wallet THEN r.opponent_wallet ELSE NULL END) AS opponent_wallet,
       r.return_pct,r.elo_before,r.elo_after,r.elo_delta,
       COALESCE(r.outcome, CASE WHEN m.status='completed' THEN 'unverified' ELSE 'pending' END) AS outcome,
       COALESCE(r.settled_at,m.finished_at,m.ends_at,m.started_at,m.created_at) AS settled_at,
@@ -1806,7 +1806,22 @@ export const getPublicPlayerProfile = createServerFn({ method: "GET" })
     if(!DB) return {profile:null,recentMatches:[]};
     const row=await DB.prepare("SELECT wallet,display_name,avatar_data_url,rating,wins,losses,draws FROM td_users WHERE wallet=?").bind(data.wallet).first<any>();
     if(!row)return {profile:null,recentMatches:[]};
-    const history=await DB.prepare("SELECT r.match_id,r.opponent_wallet,u.display_name AS opponent_display_name,u.avatar_data_url AS opponent_avatar_data_url,r.return_pct,r.elo_before,r.elo_after,r.elo_delta,r.outcome,r.settled_at FROM td_custom_match_elo_results r LEFT JOIN td_users u ON u.wallet=r.opponent_wallet WHERE r.wallet=? ORDER BY r.settled_at DESC LIMIT 100").bind(data.wallet).all<any>();
+    const history=await DB.prepare(`SELECT m.id AS match_id,
+      COALESCE((SELECT other.wallet FROM td_custom_match_members other WHERE other.match_id=m.id AND other.wallet<>mine.wallet ORDER BY other.team_number,other.wallet LIMIT 1),
+        CASE WHEN r.opponent_wallet<>mine.wallet THEN r.opponent_wallet ELSE NULL END) AS opponent_wallet,
+      ou.display_name AS opponent_display_name,ou.avatar_data_url AS opponent_avatar_data_url,
+      r.return_pct,r.elo_before,r.elo_after,r.elo_delta,
+      COALESCE(r.outcome,CASE WHEN m.status='completed' THEN 'unverified' ELSE 'pending' END) AS outcome,
+      COALESCE(r.settled_at,m.finished_at,m.ends_at,m.started_at,m.created_at) AS settled_at,
+      m.started_at,m.duration_seconds,m.mode,m.status,
+      CASE WHEN r.match_id IS NULL THEN 0 ELSE 1 END AS elo_recorded
+      FROM td_custom_match_members mine
+      JOIN td_custom_matches m ON m.id=mine.match_id
+      LEFT JOIN td_custom_match_elo_results r ON r.match_id=m.id AND r.wallet=mine.wallet
+      LEFT JOIN td_custom_match_members other ON other.match_id=m.id AND other.wallet<>mine.wallet
+      LEFT JOIN td_users ou ON ou.wallet=COALESCE(other.wallet,CASE WHEN r.opponent_wallet<>mine.wallet THEN r.opponent_wallet ELSE NULL END)
+      WHERE mine.wallet=? AND m.status IN ('completed','cancelled')
+      ORDER BY COALESCE(r.settled_at,m.finished_at,m.ends_at,m.started_at,m.created_at) DESC LIMIT 100`).bind(data.wallet).all<any>();
     return {profile:{wallet:row.wallet,displayName:row.display_name??"",avatarDataUrl:row.avatar_data_url??null,rating:row.rating??1000,wins:row.wins??0,losses:row.losses??0,draws:row.draws??0},recentMatches:history.results??[]};
   });
 
