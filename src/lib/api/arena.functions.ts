@@ -1818,8 +1818,9 @@ export const getPublicPlayerProfile = createServerFn({ method: "GET" })
       FROM td_custom_match_members mine
       JOIN td_custom_matches m ON m.id=mine.match_id
       LEFT JOIN td_custom_match_elo_results r ON r.match_id=m.id AND r.wallet=mine.wallet
-      LEFT JOIN td_custom_match_members other ON other.match_id=m.id AND other.wallet<>mine.wallet
-      LEFT JOIN td_users ou ON ou.wallet=COALESCE(other.wallet,CASE WHEN r.opponent_wallet<>mine.wallet THEN r.opponent_wallet ELSE NULL END)
+      LEFT JOIN td_users ou ON ou.wallet=COALESCE(
+        (SELECT other.wallet FROM td_custom_match_members other WHERE other.match_id=m.id AND other.wallet<>mine.wallet ORDER BY other.team_number,other.wallet LIMIT 1),
+        CASE WHEN r.opponent_wallet<>mine.wallet THEN r.opponent_wallet ELSE NULL END)
       WHERE mine.wallet=? AND m.status IN ('completed','cancelled')
       ORDER BY COALESCE(r.settled_at,m.finished_at,m.ends_at,m.started_at,m.created_at) DESC LIMIT 100`).bind(data.wallet).all<any>();
     return {profile:{wallet:row.wallet,displayName:row.display_name??"",avatarDataUrl:row.avatar_data_url??null,rating:row.rating??1000,wins:row.wins??0,losses:row.losses??0,draws:row.draws??0},recentMatches:history.results??[]};
