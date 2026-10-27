@@ -251,7 +251,7 @@ const PUBLIC_SOLANA_MAINNET_RPCS = [
 
 function solanaRpcEndpoints(): string[] {
   const configured = (bindings().SOLANA_RPC_URLS ?? bindings().SOLANA_RPC_URL ?? "")
-    .split(/[\\s,;]+/).map(value => value.trim()).filter(Boolean);
+    .split(/[\s,;]+/).map(value => value.trim()).filter(Boolean);
   const unique = [...new Set([...configured, ...PUBLIC_SOLANA_MAINNET_RPCS])];
   // Rotate the first provider between requests so a throttled public endpoint
   // does not receive every request first. Configured paid endpoints take priority.
@@ -569,18 +569,26 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     await DB.prepare("INSERT OR IGNORE INTO td_match_events (match_id,wallet,signature,block_time,slot,success,pump_fun_related,sol_delta,token_deltas_json,event_type) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(match.id,trackedWallet,sig.signature,sig.block_time,sig.slot,signatureFailed?0:1,pumpRelated?1:0,(postSol-preSol)/1e9,JSON.stringify(tokenDeltas),eventType).run();
     // Persist a clearly labelled swap candidate during automatic indexing. This is
     // inferred from token deltas + Pump.fun instruction logs, not a protocol fill receipt.
-    if (!signatureFailed && pumpRelated && (isBuy || isSell) && tokenDeltas.length === 1) {
-      const delta = tokenDeltas[0];
-      const tokenAmount = Math.abs(Number(delta.amount));
-      const solDelta = (postSol-preSol)/1e9;
-      const feeSol = index === 0 ? Number(tx.meta.fee ?? 0)/1e9 : 0;
-      const direction = isBuy && delta.amount > 0 ? "buy_candidate" : isSell && delta.amount < 0 ? "sell_candidate" : "ambiguous_candidate";
-      const solAmount = direction === "buy_candidate" ? Math.max(0, -solDelta-feeSol) : direction === "sell_candidate" ? Math.max(0, solDelta+feeSol) : 0;
-      const estimatedPrice = tokenAmount > 0 && solAmount > 0 ? solAmount/tokenAmount : null;
-      await DB.prepare("INSERT OR IGNORE INTO td_swap_fill_candidates (match_id,wallet,signature,block_time,slot,token_mint,token_delta,sol_delta_net,estimated_token_price_sol,direction,parser,confidence,explanation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(match.id,trackedWallet,sig.signature,sig.block_time,sig.slot,delta.mint,Number(delta.amount),solAmount,estimatedPrice,direction,"pump_instruction_log_plus_wallet_balance_delta","low","Automatically detected from a successful Pump.fun instruction name and one wallet token balance delta. SOL amount estimates exclude the fee when the wallet is fee payer, but bundled transfers, rent, and program-specific fill details may remain unresolved; not a verified fill or official P&L.")
-        .run();
-    }
+    if (!signatureFailed && (pumpRelated || protocols.length > 0) && tokenDeltas.length === 1) {
+       const delta = tokenDeltas[0];
+       const tokenAmount = Math.abs(Number(delta.amount));
+       const solDelta = (postSol-preSol)/1e9;
+       const feeSol = index === 0 ? Number(tx.meta.fee ?? 0)/1e9 : 0;
+       // Pump.fun instruction logs are the strongest direction hint. Other recognized
+       // swap protocols get only a low-confidence candidate when SOL/token deltas align.
+       const netSolOut = Math.max(0, -solDelta-feeSol);
+       const netSolIn = Math.max(0, solDelta+feeSol);
+       const direction = delta.amount > 0 && (isBuy || (!isSell && netSolOut > 0))
+         ? "buy_candidate"
+         : delta.amount < 0 && (isSell || (!isBuy && netSolIn > 0))
+           ? "sell_candidate"
+           : "ambiguous_candidate";
+       const solAmount = direction === "buy_candidate" ? netSolOut : direction === "sell_candidate" ? netSolIn : 0;
+       const estimatedPrice = tokenAmount > 0 && solAmount > 0 ? solAmount/tokenAmount : null;
+       await DB.prepare("INSERT OR IGNORE INTO td_swap_fill_candidates (match_id,wallet,signature,block_time,slot,token_mint,token_delta,sol_delta_net,estimated_token_price_sol,direction,parser,confidence,explanation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+         .bind(match.id,trackedWallet,sig.signature,sig.block_time,sig.slot,delta.mint,Number(delta.amount),solAmount,estimatedPrice,direction,pumpRelated?"pump_instruction_log_plus_wallet_balance_delta":"recognized_swap_protocol_plus_wallet_balance_delta","low","Candidate derived from a recognized swap protocol and one wallet token balance delta. SOL movement is a rough net-wallet estimate; bundled transfers, USDC/other quote assets, rent, and program-specific fill details may remain unresolved. This is not a verified fill or official P&L.")
+         .run();
+     }
     await DB.prepare("UPDATE td_match_index_queue SET status='processed',attempts=attempts+1,last_error=NULL,updated_at=datetime('now') WHERE match_id=? AND wallet=? AND signature=?")
       .bind(match.id,trackedWallet,sig.signature).run();
     indexed++;
