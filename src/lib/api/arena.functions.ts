@@ -668,8 +668,27 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     await DB.prepare("INSERT OR IGNORE INTO td_match_events (match_id,wallet,signature,block_time,slot,success,pump_fun_related,sol_delta,token_deltas_json,event_type) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(match.id,ownerWallet,sig.signature,sig.block_time,sig.slot,signatureFailed?0:1,pumpRelated?1:0,(postSol-preSol)/1e9,JSON.stringify(tokenDeltas),eventType).run();
     // Persist a clearly labelled swap candidate during automatic indexing. This is
     // inferred from token deltas + Pump.fun instruction logs, not a protocol fill receipt.
-    if (!signatureFailed && (pumpRelated || protocols.length > 0) && tokenDeltas.length === 1) {
-       const delta = tokenDeltas[0];
+    // Aggregate wallet deltas by mint before classifying a swap. Transactions can
+    // touch multiple token accounts for the same mint (including temporary/closed
+    // accounts); requiring tokenDeltas.length === 1 silently dropped valid buys.
+    const deltasByMint = new Map<string,{mint:string;amount:number;rawDelta:bigint;decimals:number}>();
+    for (const delta of tokenDeltas) {
+      const prior = deltasByMint.get(delta.mint);
+      if (prior) {
+        prior.amount += Number(delta.amount) || 0;
+        prior.rawDelta += BigInt(String(delta.rawDelta ?? "0"));
+      } else {
+        deltasByMint.set(delta.mint,{mint:delta.mint,amount:Number(delta.amount)||0,rawDelta:BigInt(String(delta.rawDelta ?? "0")),decimals:Number(delta.decimals)||0});
+      }
+    }
+    const netTokenDeltas = [...deltasByMint.values()].filter(delta => Math.abs(delta.amount) > 1e-12);
+    // Pump.fun SOL-quoted swaps normally move one non-SOL mint. If additional
+    // token mints appear, keep only a unique meaningful non-quote asset delta.
+    const quoteMints = new Set(["So11111111111111111111111111111111111111112","EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"]);
+    const swapAssetDeltas = netTokenDeltas.filter(delta => !quoteMints.has(delta.mint));
+    const candidateDelta = swapAssetDeltas.length === 1 ? swapAssetDeltas[0] : null;
+    if (!signatureFailed && (pumpRelated || protocols.length > 0) && candidateDelta) {
+       const delta = candidateDelta;
        const tokenAmount = Math.abs(Number(delta.amount));
        const solDelta = (postSol-preSol)/1e9;
        const feeSol = index === 0 ? Number(tx.meta.fee ?? 0)/1e9 : 0;
