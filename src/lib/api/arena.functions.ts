@@ -1496,13 +1496,46 @@ export const surrenderCustomMatch = createServerFn({ method: "POST" })
     const member = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?")
       .bind(data.matchId, wallet).first<{team_number:number}>();
     if (!member) throw new Error("You must be in this match to surrender.");
-    const room = await DB.prepare("SELECT status,mode FROM td_custom_matches WHERE id=?")
-      .bind(data.matchId).first<{status:string;mode:string}>();
+    const room = await DB.prepare("SELECT id,status,mode,max_players FROM td_custom_matches WHERE id=?")
+      .bind(data.matchId).first<{id:string;status:string;mode:string;max_players:number}>();
     if (!room) throw new Error("Match not found.");
     if (room.status !== "active") throw new Error("Only an active match can be surrendered.");
-    await DB.prepare("UPDATE td_custom_matches SET status='completed',ends_at=COALESCE(ends_at,datetime('now')) WHERE id=? AND status='active'")
-      .bind(data.matchId).run();
-    return { ok: true, status: "completed", surrenderedBy: wallet };
+    const rosterResult = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,wallet")
+      .bind(data.matchId).all<{wallet:string;team_number:number}>();
+    const roster = rosterResult.results ?? [];
+    if (roster.length !== room.max_players) throw new Error("Cannot surrender an incomplete match roster.");
+    // The conditional state transition is the idempotency claim: only one surrender can settle this room.
+    const claim = await DB.prepare("UPDATE td_custom_matches SET status='completed',ends_at=datetime('now'),surrendered_by=? WHERE id=? AND status='active' AND surrendered_by IS NULL")
+      .bind(wallet, data.matchId).run();
+    if ((claim.meta?.changes ?? 0) !== 1) throw new Error("This match has already ended or another surrender was recorded.");
+    const losingTeam = member.team_number;
+    const winningTeam = losingTeam === 1 ? 2 : 1;
+    const ratings = await Promise.all(roster.map(async player => ({
+      ...player,
+      rating: (await DB.prepare("SELECT rating FROM td_users WHERE wallet=?").bind(player.wallet).first<{rating:number}>())?.rating ?? 1000,
+    })));
+    const avgRating = [1,2].map(team => {
+      const teamRatings = ratings.filter(player => player.team_number === team);
+      return teamRatings.reduce((sum, player) => sum + player.rating, 0) / Math.max(1, teamRatings.length);
+    });
+    const expectedTeamOne = 1 / (1 + Math.pow(10, (avgRating[1] - avgRating[0]) / 400));
+    const teamOneDelta = Math.round(32 * ((winningTeam === 1 ? 1 : 0) - expectedTeamOne));
+    const teamTwoDelta = Math.round(32 * ((winningTeam === 2 ? 1 : 0) - (1 - expectedTeamOne)));
+    const statements: Array<ReturnType<typeof DB.prepare>> = [];
+    for (const player of ratings) {
+      const delta = player.team_number === 1 ? teamOneDelta : teamTwoDelta;
+      const after = Math.max(0, player.rating + delta);
+      const opponent = roster.find(other => other.team_number !== player.team_number);
+      const outcome = player.team_number === losingTeam ? "loss" : "win";
+      statements.push(DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+? WHERE wallet=?")
+        .bind(after, outcome === "win" ? 1 : 0, outcome === "loss" ? 1 : 0, player.wallet));
+      statements.push(DB.prepare("INSERT OR IGNORE INTO td_custom_match_elo_results (match_id,wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome) VALUES (?,?,?,?,?,?,?,?)")
+        .bind(room.id, player.wallet, opponent?.wallet ?? player.wallet, null, player.rating, after, delta, outcome));
+    }
+    statements.push(DB.prepare("INSERT INTO td_custom_match_settlements (match_id,status,team_one_return_pct,team_two_return_pct,member_returns_json,blockers_json,indexed_transactions,elo_applied,updated_at) VALUES (?,'verified',NULL,NULL,?,?,0,1,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET status='verified',member_returns_json=excluded.member_returns_json,blockers_json=excluded.blockers_json,elo_applied=1,updated_at=datetime('now')")
+      .bind(room.id, JSON.stringify(roster.map(player => ({wallet:player.wallet,team:player.team_number,returnPct:null,outcome:player.team_number===losingTeam?"loss":"win",reason:"surrender_forfeit"})), JSON.stringify(["surrender_forfeit"])));
+    await DB.batch(statements);
+    return { ok: true, status: "completed", surrenderedBy: wallet, outcome: "loss", losingTeam, winningTeam, eloApplied: true };
   });
 
 export const createCustomMatch = createServerFn({ method: "POST" })
