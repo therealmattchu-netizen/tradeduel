@@ -1091,6 +1091,9 @@ export const reconcileMatchSettlement = createServerFn({ method: "POST" }).valid
   const get = (player:string,phase:string) => rows.find(r=>r.wallet===player&&r.phase===phase);
   const p1s=get(match.player_one,"start"), p1e=get(match.player_one,"end"), p2s=get(match.player_two,"start"), p2e=get(match.player_two,"end");
   const blockers:string[]=[];
+  // Legacy standard matches use whole-wallet snapshot P&L, which counts pre-match holdings.
+  // They are retired from the UI and must not apply ELO from this invalid scoring basis.
+  blockers.push("eligible_trade_pnl_server_reconciliation_required");
   if(match.status!=="completed" || !match.ends_at || new Date(match.ends_at).getTime()>Date.now()) blockers.push("match_not_expired");
   for (const [player,phase] of [[match.player_one,"start"],[match.player_one,"end"],[match.player_two,"start"],[match.player_two,"end"]] as Array<[string,"start"|"end"]>) {
     const snapshot = rows.find(row=>row.wallet===player&&row.phase===phase);
