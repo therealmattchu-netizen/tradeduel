@@ -1871,10 +1871,11 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         const prices=new Map<string,number>(),liquidity=new Map<string,number>(),caps=new Map<string,number>(),names=new Map<string,{name:string|null;symbol:string|null;pairUrl:string|null}>();
         for(const pair of pairs){const mint=pair.baseToken?.address,price=Number(pair.priceUsd),liq=Number(pair.liquidity?.usd??0);if(mint&&price>0&&Number.isFinite(price)&&liq>=25&&liq>(liquidity.get(mint)??0)){prices.set(mint,price);liquidity.set(mint,liq);const cap=Number(pair.marketCap??pair.fdv??0);if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);names.set(mint,{name:pair.baseToken?.name??null,symbol:pair.baseToken?.symbol??null,pairUrl:pair.url??null});}}
         const missing=tokenBalances.map(t=>t.mint).filter(mint=>!prices.has(mint)).slice(0,8);
+        type PumpCoin={name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string};
         await Promise.all(missing.map(async mint=>{try{
-          let coin:{name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string}|null=null;
+          let coin:PumpCoin|undefined;
           for(const endpoint of ["https://frontend-api-v3.pump.fun/coins-v2/"+encodeURIComponent(mint),"https://frontend-api-v3.pump.fun/coins/"+encodeURIComponent(mint)+"?sync=true"]){
-            try{const response=await fetch(endpoint,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});if(response.ok){coin=await response.json() as typeof coin;if(coin)break;}}catch{}
+            try{const response=await fetch(endpoint,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});if(response.ok){coin=await response.json() as PumpCoin;break;}}catch{}
           }
           if(!coin)return;
           const cap=Number(coin.usd_market_cap??coin.market_cap_usd??coin.market_cap);
