@@ -744,11 +744,11 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   // this creates a sampled series, never a claim of historical pricing between syncs.
   const observationAt = Math.floor(Date.now() / 1000);
   for (const trackedWallet of participants) {
-    // Avoid hammering Solana RPC and the spot-price API when the match room polls.
-    // Observations are sampled at most once per minute per wallet and match.
+    // Keep live portfolio values responsive without issuing duplicate quote/RPC work on every UI poll.
+    // The room polls every three seconds; persist a fresh priced observation at most every five seconds per wallet.
     const latestObservation = await DB.prepare("SELECT observed_at FROM td_match_valuation_observations WHERE match_id = ? AND wallet = ? ORDER BY observed_at DESC LIMIT 1")
       .bind(match.id, trackedWallet).first<{ observed_at: number }>();
-    if (latestObservation && observationAt - latestObservation.observed_at < 15) continue;
+    if (latestObservation && observationAt - latestObservation.observed_at < 5) continue;
     const balance = await rpcCall("getBalance", [trackedWallet, { commitment: "confirmed" }]) as { value: number };
     const [classicAccounts, token2022Accounts] = await Promise.all([
       rpcCall("getTokenAccountsByOwner", [trackedWallet, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed", commitment: "confirmed" }]) as Promise<ParsedTokenAccounts>,
