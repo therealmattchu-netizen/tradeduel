@@ -1208,9 +1208,12 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
         const nextOne = Math.max(0, Math.round(ratingOne + 32 * (scoreOne-expectedOne)));
         const nextTwo = Math.max(0, Math.round(ratingTwo + 32 * (scoreTwo-expectedTwo)));
         const draw = scoreOne === 0.5;
+        const deltaOne=nextOne-ratingOne, deltaTwo=nextTwo-ratingTwo;
         await DB.batch([
           DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(nextOne,scoreOne===1?1:0,scoreOne===0?1:0,draw?1:0,one.wallet),
           DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(nextTwo,scoreTwo===1?1:0,scoreTwo===0?1:0,draw?1:0,two.wallet),
+          DB.prepare("INSERT OR IGNORE INTO td_custom_match_elo_results (match_id,wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome) VALUES (?,?,?,?,?,?,?,?)").bind(match.id,one.wallet,two.wallet,one.returnPct!,ratingOne,nextOne,deltaOne,draw?"draw":scoreOne===1?"win":"loss"),
+          DB.prepare("INSERT OR IGNORE INTO td_custom_match_elo_results (match_id,wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome) VALUES (?,?,?,?,?,?,?,?)").bind(match.id,two.wallet,one.wallet,two.returnPct!,ratingTwo,nextTwo,deltaTwo,draw?"draw":scoreTwo===1?"win":"loss"),
         ]);
         eloApplied = true;
       } else {
@@ -1441,6 +1444,111 @@ export const sendCustomMatchChat = createServerFn({ method: "POST" })
     return { message:row, team:member.team_number };
   });
 
+
+
+
+
+export const getCustomMatchResult = createServerFn({ method: "POST" })
+  .validator(z.object({token:z.string().min(24),matchId:z.string().uuid()}))
+  .handler(async ({data})=>{
+    const {DB,wallet}=await requireSession(data.token);
+    const member=await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
+    if(!member)throw new Error("Only match participants can view official results.");
+    const rows=await DB.prepare("SELECT wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome,settled_at FROM td_custom_match_elo_results WHERE match_id=? ORDER BY wallet").bind(data.matchId).all<any>();
+    return {results:rows.results??[],viewerWallet:wallet,verified:(rows.results??[]).length===2};
+  });
+
+/** Signed-in player's verified Classic match history, including immutable before/after ratings. */
+export const getCustomMatchHistory = createServerFn({ method: "POST" })
+  .validator(z.object({ token:z.string().min(24), limit:z.number().int().min(1).max(100).optional() }))
+  .handler(async ({data})=>{
+    const {DB,wallet}=await requireSession(data.token);
+    const rows=await DB.prepare(`SELECT r.match_id,r.wallet,r.opponent_wallet,r.return_pct,r.elo_before,r.elo_after,r.elo_delta,r.outcome,r.settled_at,
+      m.started_at,m.ends_at,m.duration_seconds,m.mode,m.status
+      FROM td_custom_match_elo_results r JOIN td_custom_matches m ON m.id=r.match_id
+      WHERE r.wallet=? ORDER BY r.settled_at DESC LIMIT ?`).bind(wallet,data.limit??50).all<any>();
+    return {wallet,matches:rows.results??[]};
+  });
+
+/** Public profile summary; never exposes session tokens or private room details. */
+export const getPublicPlayerProfile = createServerFn({ method: "GET" })
+  .validator(z.object({ wallet:z.string().regex(WALLET_RE) }))
+  .handler(async ({data})=>{
+    const {DB}=bindings();
+    if(!DB) return {profile:null,recentMatches:[]};
+    const row=await DB.prepare("SELECT wallet,display_name,avatar_data_url,rating,wins,losses,draws FROM td_users WHERE wallet=?").bind(data.wallet).first<any>();
+    if(!row)return {profile:null,recentMatches:[]};
+    const history=await DB.prepare("SELECT match_id,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome,settled_at FROM td_custom_match_elo_results WHERE wallet=? ORDER BY settled_at DESC LIMIT 10").bind(data.wallet).all<any>();
+    return {profile:{wallet:row.wallet,displayName:row.display_name??"",avatarDataUrl:row.avatar_data_url??null,rating:row.rating??1000,wins:row.wins??0,losses:row.losses??0,draws:row.draws??0},recentMatches:history.results??[]};
+  });
+
+/** Request/answer a rematch. The original verified loser initiates; only their opponent can accept. */
+export const getCustomMatchRematch = createServerFn({ method: "POST" })
+  .validator(z.object({token:z.string().min(24),matchId:z.string().uuid()}))
+  .handler(async ({data})=>{
+    const {DB,wallet}=await requireSession(data.token);
+    const member=await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
+    if(!member)throw new Error("Only players in this match can view rematch status.");
+    const row=await DB.prepare("SELECT requested_by,opponent_wallet,status,new_match_id,created_at FROM td_custom_match_rematches WHERE match_id=?").bind(data.matchId).first<any>();
+    return {rematch:row??null,viewerWallet:wallet};
+  });
+
+export const requestCustomMatchRematch = createServerFn({ method: "POST" })
+  .validator(z.object({token:z.string().min(24),matchId:z.string().uuid()}))
+  .handler(async ({data})=>{
+    const {DB,wallet}=await requireSession(data.token);
+    const match=await DB.prepare("SELECT status,mode,duration_seconds FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{status:string;mode:string;duration_seconds:number}>();
+    if(!match||match.status!=="completed"||match.mode!=="head_to_head_percentage")throw new Error("Only completed Classic matches can be rematched.");
+    const result=await DB.prepare("SELECT opponent_wallet,return_pct,outcome FROM td_custom_match_elo_results WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{opponent_wallet:string;return_pct:number;outcome:string}>();
+    if(!result)throw new Error("A verified result is required before requesting a rematch.");
+    if(result.outcome!=="loss")throw new Error("Only the losing player can request a rematch.");
+    const opponent=await DB.prepare("SELECT return_pct FROM td_custom_match_elo_results WHERE match_id=? AND wallet=?").bind(data.matchId,result.opponent_wallet).first<{return_pct:number}>();
+    if(!opponent||result.return_pct>opponent.return_pct)throw new Error("Only the losing player can request a rematch.");
+    const prior=await DB.prepare("SELECT status FROM td_custom_match_rematches WHERE match_id=?").bind(data.matchId).first<{status:string}>();
+    if(prior)throw new Error("A rematch decision has already been recorded for this match.");
+    await DB.prepare("INSERT INTO td_custom_match_rematches (match_id,requested_by,opponent_wallet,status) VALUES (?,?,?,'pending')").bind(data.matchId,wallet,result.opponent_wallet).run();
+    return {status:"pending",message:"Rematch requested. Your opponent must accept."};
+  });
+
+export const respondCustomMatchRematch = createServerFn({ method: "POST" })
+  .validator(z.object({token:z.string().min(24),matchId:z.string().uuid(),accept:z.boolean()}))
+  .handler(async ({data})=>{
+    const {DB,wallet}=await requireSession(data.token);
+    const match=await DB.prepare("SELECT duration_seconds,mode,status FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{duration_seconds:number;mode:string;status:string}>();
+    if(!match||match.status!=="completed"||match.mode!=="head_to_head_percentage")throw new Error("The original match is not eligible for a rematch.");
+    const request=await DB.prepare("SELECT requested_by,opponent_wallet,status,new_match_id FROM td_custom_match_rematches WHERE match_id=?").bind(data.matchId).first<{requested_by:string;opponent_wallet:string;status:string;new_match_id:string|null}>();
+    if(!request)throw new Error("No rematch has been requested.");
+    if(request.opponent_wallet!==wallet)throw new Error("Only the opponent can respond to this rematch.");
+    if(request.status!=="pending")return {status:request.status,newMatchId:request.new_match_id};
+    if(!data.accept){
+      await DB.prepare("UPDATE td_custom_match_rematches SET status='declined',updated_at=datetime('now') WHERE match_id=? AND status='pending'").bind(data.matchId).run();
+      return {status:"declined",newMatchId:null};
+    }
+    const originalMembers=await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number").bind(data.matchId).all<{wallet:string;team_number:number}>();
+    const roster=originalMembers.results??[];
+    if(roster.length!==2||!roster.some(m=>m.wallet===request.requested_by)||!roster.some(m=>m.wallet===wallet))throw new Error("The original two-player roster could not be verified.");
+    const newId=crypto.randomUUID(), now=new Date(), started=now.toISOString(), ends=new Date(now.getTime()+match.duration_seconds*1000).toISOString();
+    const claim=await DB.prepare("UPDATE td_custom_match_rematches SET status='accepted',new_match_id=?,updated_at=datetime('now') WHERE match_id=? AND status='pending'").bind(newId,data.matchId).run();
+    if((claim.meta?.changes??0)!==1){const existing=await DB.prepare("SELECT status,new_match_id FROM td_custom_match_rematches WHERE match_id=?").bind(data.matchId).first<{status:string;new_match_id:string|null}>();return {status:existing?.status??"pending",newMatchId:existing?.new_match_id??null};}
+    await DB.batch([
+      DB.prepare("INSERT INTO td_custom_matches (id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status,started_at,ends_at) VALUES (?,?,?,'public',2,?,NULL,'active',?,?)").bind(newId,request.requested_by,match.mode,match.duration_seconds,started,ends),
+      DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,1)").bind(newId,request.requested_by),
+      DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,2)").bind(newId,wallet),
+    ]);
+    return {status:"accepted",newMatchId:newId};
+  });
+
+/** Public profile cards for wallets shown in leaderboard, spectator, and match views. */
+export const getPublicProfiles = createServerFn({ method: "POST" })
+  .validator(z.object({ wallets: z.array(z.string().regex(WALLET_RE)).max(100) }))
+  .handler(async ({ data }) => {
+    const { DB } = bindings();
+    if (!DB || data.wallets.length === 0) return { profiles: [] };
+    const wallets = [...new Set(data.wallets)];
+    const placeholders = wallets.map(() => "?").join(",");
+    const rows = await DB.prepare(`SELECT wallet,display_name,avatar_data_url,rating,wins,losses,draws FROM td_users WHERE wallet IN (${placeholders})`).bind(...wallets).all<{wallet:string;display_name:string|null;avatar_data_url:string|null;rating:number;wins:number;losses:number;draws:number}>();
+    return { profiles: (rows.results ?? []).map(row => ({wallet:row.wallet,displayName:row.display_name ?? "",avatarDataUrl:row.avatar_data_url ?? null,rating:row.rating ?? 1000,wins:row.wins ?? 0,losses:row.losses ?? 0,draws:row.draws ?? 0})) };
+  });
 
 /** Wallet profile API. Avatar data is resized client-side and bounded server-side. */
 export const getMyProfile = createServerFn({ method: "GET" })
