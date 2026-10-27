@@ -250,11 +250,17 @@ const PUBLIC_SOLANA_MAINNET_RPCS = [
 ] as const;
 
 function solanaRpcEndpoints(): string[] {
-  const configured = (bindings().SOLANA_RPC_URLS ?? bindings().SOLANA_RPC_URL ?? "")
+  const env = bindings();
+  // Helius is inserted first when configured, but explicit RPC URLs remain supported.
+  // This is server-only: the API key must never be sent to browser code.
+  const helius = env.HELIUS_API_KEY?.trim()
+    ? `https://mainnet.helius-rpc.com/?api-key=${encodeURIComponent(env.HELIUS_API_KEY.trim())}`
+    : "";
+  const configured = (env.SOLANA_RPC_URLS ?? env.SOLANA_RPC_URL ?? "")
     .split(/[\s,;]+/).map(value => value.trim()).filter(Boolean);
-  const primary = [...new Set(configured)];
+  const primary = [...new Set([helius, ...configured].filter(Boolean))];
   const fallbacks = [...new Set(PUBLIC_SOLANA_MAINNET_RPCS.filter(url => !primary.includes(url)))];
-  // Keep configured provider URLs first on every request. Only rotate public fallbacks.
+  // Keep configured providers first on every request. Only rotate public fallbacks.
   const offset = Math.floor(Date.now() / 15000) % Math.max(fallbacks.length, 1);
   return [...primary, ...fallbacks.slice(offset), ...fallbacks.slice(0, offset)];
 }
