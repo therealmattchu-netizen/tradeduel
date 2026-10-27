@@ -130,8 +130,11 @@ function CustomLiveMatch(){
   // Only eligible post-start trade accounting may drive competitive Change/Return.
   // Never substitute whole-wallet delta: it includes pre-match holdings and unrelated changes.
   const hasEligibleTrades=candidates.length>0;
-  const tradeChange=hasEligibleTrades&&solPrice!==null&&solPrice>0?eligiblePnlSol*solPrice:null;
-  const tradePct=hasEligibleTrades&&totalBuyCostSol>0?eligiblePnlSol/totalBuyCostSol*100:null;
+  const tradeMarkComplete=!unpricedOpenLots;
+  // A cost-basis placeholder is not a live quote. Do not let it produce a fake 0% return
+  // or suppress the independently sampled position-mark fallback while quote/indexing catches up.
+  const tradeChange=hasEligibleTrades&&tradeMarkComplete&&solPrice!==null&&solPrice>0?eligiblePnlSol*solPrice:null;
+  const tradePct=hasEligibleTrades&&tradeMarkComplete&&totalBuyCostSol>0?eligiblePnlSol/totalBuyCostSol*100:null;
   const baselinePortfolio=typeof startValuation?.portfolio_usd==="number"&&startValuation.portfolio_usd>0?startValuation.portfolio_usd:null;
   // Fallback for the indexing lag: mark only tokens absent from the match-start
   // inventory. Compare each such position's first observed USD mark with its
@@ -144,7 +147,10 @@ function CustomLiveMatch(){
   const firstObservedInventory=playerObservations.find(o=>(startSec===null||o.observed_at>=startSec)&&Array.isArray(o.tokenBalances));
   const startBalances=(()=>{try{return JSON.parse(startSnapshot?.token_balances_json??"[]") as Array<{mint:string;amount:number}>;}catch{return [] as Array<{mint:string;amount:number}>;}})();
   const fallbackStartMints=new Set((firstObservedInventory?.tokenBalances??[]).filter(t=>Number(t.amount)>0).map(t=>t.mint));
-  const startMints=new Set((startSnapshot?startBalances.map(t=>t.mint):[]).filter(Boolean));
+  // Only trust the start snapshot as an inventory exclusion if it was captured essentially at match start.
+  // A delayed first sync can otherwise classify newly bought duel positions as pre-match holdings.
+  const startSnapshotIsTimely=Boolean(startSnapshot&&startSec!==null&&Number.isFinite(Number(startSnapshot.observed_at))&&Number(startSnapshot.observed_at)<=startSec+5);
+  const startMints=new Set((startSnapshotIsTimely?startBalances.map(t=>t.mint):[]).filter(Boolean));
   const hasInventoryBaseline=Boolean(startSnapshot||firstObservedInventory);
   let livePositionDeltaUsd=0,livePositionBaselineUsd=0,livePositionMarks=0;
   for(const token of latestTokens){
@@ -159,7 +165,7 @@ function CustomLiveMatch(){
     livePositionBaselineUsd+=firstMark.value;
     livePositionMarks++;
   }
-  const useLivePositionFallback=tradeChange===null&&hasInventoryBaseline&&livePositionMarks>0;
+  const useLivePositionFallback=(tradeChange===null||tradePct===null)&&hasInventoryBaseline&&livePositionMarks>0;
   const change=tradeChange??(useLivePositionFallback?livePositionDeltaUsd:null);
   const pct=tradePct??(useLivePositionFallback&&livePositionBaselineUsd>0?livePositionDeltaUsd/livePositionBaselineUsd*100:null);
   const scoreSource=hasEligibleTrades?"eligible_trade_estimate":useLivePositionFallback?"live_position_mark":"waiting_for_eligible_trades";
