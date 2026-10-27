@@ -1188,37 +1188,46 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
     await DB.prepare("INSERT INTO td_custom_match_settlements (match_id,status,team_one_return_pct,team_two_return_pct,member_returns_json,blockers_json,indexed_transactions,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET status=excluded.status,team_one_return_pct=excluded.team_one_return_pct,team_two_return_pct=excluded.team_two_return_pct,member_returns_json=excluded.member_returns_json,blockers_json=excluded.blockers_json,indexed_transactions=excluded.indexed_transactions,updated_at=datetime('now')")
       .bind(match.id,status,teamOne,teamTwo,JSON.stringify(returns),JSON.stringify(unique),txCount?.count??0).run();
 
-    // Official ELO is only awarded for verified Classic percentage 1v1 matches.
-    // The conditional claim prevents repeated polling from awarding rating more than once.
+    // Official ELO is awarded only after verified portfolio and transaction reconciliation.
+    // One conditional claim makes rating updates idempotent across concurrent polling requests.
     let eloApplied = false;
-    if (status === "verified" && match.mode === "head_to_head" && roster.length === 2 && returns.length === 2 && returns.every(r => r.returnPct !== null)) {
+    const teamMode = match.mode === "duo" || match.mode === "group";
+    const canRate = status === "verified" && returns.length === roster.length && returns.length === match.max_players && returns.every(r => r.returnPct !== null) &&
+      (match.mode === "head_to_head" ? roster.length === 2 : teamMode && new Set(roster.map(m=>m.team_number)).size === 2 && roster.every(m=>m.team_number===1||m.team_number===2));
+    if (canRate) {
       const claim = await DB.prepare("UPDATE td_custom_match_settlements SET elo_applied=1,updated_at=datetime('now') WHERE match_id=? AND status='verified' AND elo_applied=0").bind(match.id).run();
       if ((claim.meta?.changes ?? 0) === 1) {
-        const [one,two] = returns;
-        const [userOne,userTwo] = await Promise.all([
-          DB.prepare("SELECT rating FROM td_users WHERE wallet=?").bind(one.wallet).first<{rating:number}>(),
-          DB.prepare("SELECT rating FROM td_users WHERE wallet=?").bind(two.wallet).first<{rating:number}>(),
-        ]);
-        const ratingOne = userOne?.rating ?? 1000;
-        const ratingTwo = userTwo?.rating ?? 1000;
-        const expectedOne = 1 / (1 + Math.pow(10, (ratingTwo-ratingOne)/400));
-        const expectedTwo = 1 - expectedOne;
-        const scoreOne = Math.abs((one.returnPct ?? 0) - (two.returnPct ?? 0)) < 1e-8 ? 0.5 : (one.returnPct! > two.returnPct! ? 1 : 0);
-        const scoreTwo = 1 - scoreOne;
-        const nextOne = Math.max(0, Math.round(ratingOne + 32 * (scoreOne-expectedOne)));
-        const nextTwo = Math.max(0, Math.round(ratingTwo + 32 * (scoreTwo-expectedTwo)));
-        const draw = scoreOne === 0.5;
-        const deltaOne=nextOne-ratingOne, deltaTwo=nextTwo-ratingTwo;
-        await DB.batch([
-          DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(nextOne,scoreOne===1?1:0,scoreOne===0?1:0,draw?1:0,one.wallet),
-          DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(nextTwo,scoreTwo===1?1:0,scoreTwo===0?1:0,draw?1:0,two.wallet),
-          DB.prepare("INSERT OR IGNORE INTO td_custom_match_elo_results (match_id,wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome) VALUES (?,?,?,?,?,?,?,?)").bind(match.id,one.wallet,two.wallet,one.returnPct!,ratingOne,nextOne,deltaOne,draw?"draw":scoreOne===1?"win":"loss"),
-          DB.prepare("INSERT OR IGNORE INTO td_custom_match_elo_results (match_id,wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome) VALUES (?,?,?,?,?,?,?,?)").bind(match.id,two.wallet,one.wallet,two.returnPct!,ratingTwo,nextTwo,deltaTwo,draw?"draw":scoreTwo===1?"win":"loss"),
-        ]);
-        eloApplied = true;
+        const teams = [1,2].map(team => returns.filter(r=>r.team===team));
+        const teamPct = teams.map(rows=>rows.reduce((sum,r)=>sum+(r.returnPct??0),0)/rows.length);
+        const draw = Math.abs(teamPct[0]-teamPct[1]) < 1e-8;
+        const winningTeam = draw ? 0 : teamPct[0] > teamPct[1] ? 1 : 2;
+        const userRatings = await Promise.all(roster.map(async member => ({
+          ...member,
+          rating: (await DB.prepare("SELECT rating FROM td_users WHERE wallet=?").bind(member.wallet).first<{rating:number}>())?.rating ?? 1000,
+        })));
+        const avgRating = [1,2].map(team => {
+          const members=userRatings.filter(m=>m.team_number===team);
+          return members.reduce((sum,m)=>sum+m.rating,0)/Math.max(1,members.length);
+        });
+        const expected = 1/(1+Math.pow(10,(avgRating[1]-avgRating[0])/400));
+        const scores = [draw?0.5:winningTeam===1?1:0, draw?0.5:winningTeam===2?1:0];
+        const teamDelta = scores.map((score,i)=>Math.round(32*(score-(i===0?expected:1-expected))));
+        const statements: D1PreparedStatement[] = [];
+        for (const member of userRatings) {
+          const teamIndex=member.team_number-1;
+          const delta=teamDelta[teamIndex];
+          const after=Math.max(0,member.rating+delta);
+          const opponent=roster.find(other=>other.team_number!==member.team_number);
+          const ownReturn=returns.find(r=>r.wallet===member.wallet)?.returnPct;
+          const outcome=draw?"draw":winningTeam===member.team_number?"win":"loss";
+          statements.push(DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(after,outcome==="win"?1:0,outcome==="loss"?1:0,draw?1:0,member.wallet));
+          statements.push(DB.prepare("INSERT OR IGNORE INTO td_custom_match_elo_results (match_id,wallet,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome) VALUES (?,?,?,?,?,?,?,?)").bind(match.id,member.wallet,opponent?.wallet??member.wallet,ownReturn!,member.rating,after,delta,outcome));
+        }
+        if(statements.length) await DB.batch(statements);
+        eloApplied=true;
       } else {
-        const existing = await DB.prepare("SELECT elo_applied FROM td_custom_match_settlements WHERE match_id=?").bind(match.id).first<{elo_applied:number}>();
-        eloApplied = existing?.elo_applied === 1;
+        const existing=await DB.prepare("SELECT elo_applied FROM td_custom_match_settlements WHERE match_id=?").bind(match.id).first<{elo_applied:number}>();
+        eloApplied=existing?.elo_applied===1;
       }
     }
     return {matchId:match.id,status,teamOneReturnPct:teamOne,teamTwoReturnPct:teamTwo,members:returns,blockers:unique,priceLookupsThisRun:quoteLookups,indexedTransactions:txCount?.count??0,eloApplied,message:status==="verified"?(eloApplied?"Classic percentage result verified; ELO updated exactly once.":"All team members passed the configured historical portfolio reconciliation checks."):"Team scores remain unverified until all historical prices, snapshots, transaction history, transfers, and lifecycle effects are reconciled."};
@@ -1251,7 +1260,7 @@ export const sendMatchChatMessage = createServerFn({ method: "POST" })
   });
 
 
-const customMatchMode = z.enum(["head_to_head"]);
+const customMatchMode = z.enum(["head_to_head", "duo", "group"]);
 const customMatchVisibility = z.enum(["public", "private"]);
 
 /** Public/private room browser. Private room passwords are never returned to clients. */
@@ -1358,8 +1367,9 @@ export const createCustomMatch = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    if (data.mode !== "head_to_head" || data.maxPlayers !== 2) {
-      throw new Error("TradeDuel currently supports Classic percentage 1v1 only.");
+    const expectedPlayers = data.mode === "head_to_head" ? 2 : data.mode === "duo" ? 4 : data.maxPlayers;
+    if (data.maxPlayers !== expectedPlayers || (data.mode === "group" && ![6,8].includes(data.maxPlayers))) {
+      throw new Error("Invalid player limit for the selected match mode.");
     }
     const password = data.password?.trim() ?? "";
     if (data.visibility === "private" && password.length < 4) throw new Error("Private matches need a password of at least 4 characters.");
@@ -1384,7 +1394,8 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     if (!match) throw new Error("This match does not exist.");
     const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
     if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"Already a member of this match." };
-    if (match.mode !== "head_to_head" || match.max_players !== 2) throw new Error("Only Classic percentage 1v1 matches are currently available.");
+    const validCapacity = match.mode === "head_to_head" ? match.max_players === 2 : match.mode === "duo" ? match.max_players === 4 : match.mode === "group" ? [6,8].includes(match.max_players) : false;
+    if (!validCapacity) throw new Error("This match has an unsupported game mode or player limit.");
     if (match.status !== "open") throw new Error("This match is no longer open for new players.");
     if (match.visibility === "private") {
       const provided = data.password?.trim() ?? "";
@@ -1392,7 +1403,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     }
     const counts = await DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN team_number=1 THEN 1 ELSE 0 END) AS team_one FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number;team_one:number|null}>();
     if ((counts?.total ?? 0) >= match.max_players) throw new Error("This match is full.");
-    const teamSize = 1;
+    const teamSize = match.mode === "head_to_head" ? 1 : match.max_players / 2;
     const team = (counts?.team_one ?? 0) < teamSize ? 1 : 2;
     await DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(match.id,wallet,team).run();
     const after = await DB.prepare("SELECT COUNT(*) AS total FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number}>();
