@@ -739,3 +739,12 @@ body { margin: 0; background: var(--td-bg); color: var(--td-white); font-family:
 .td-status-pill{backdrop-filter:blur(8px)}
 @media(max-width:760px){.td-page-hero{grid-template-columns:1fr}.td-page-hero-visual{min-height:185px;max-width:none;width:100%;justify-self:stretch}.td-page-hero-visual-mark{width:68px;height:68px;border-radius:20px}.td-page-hero-visual-mark img{width:46px;height:46px}.td-page-hero-mini-chart{height:34px;bottom:33px}.td-page-hero-visual-label{bottom:10px;font-size:8px}}
 @media(prefers-reduced-motion:reduce){.td-page-hero-mini-chart i,.td-page-hero-visual-mark{animation:none!important;transition:none!important}}
+
+
+/* Keep the original TradeDuel logo artwork; remove only the stray purple halo/artifacts around it. */
+.td-hero-emblem{background:transparent!important;box-shadow:none!important}
+.td-hero-emblem img{filter:none!important;mix-blend-mode:normal!important}
+.td-launch-emblem{background:transparent!important;box-shadow:none!important}
+.td-launch-emblem img{filter:none!important;mix-blend-mode:normal!important}
+.td-launch-art img{filter:brightness(.55) saturate(.55)!important}
+.td-launch-mark{box-shadow:none!important}
