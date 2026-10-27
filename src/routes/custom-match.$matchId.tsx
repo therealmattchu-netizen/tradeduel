@@ -132,10 +132,31 @@ function CustomLiveMatch(){
   const tradeChange=hasEligibleTrades&&solPrice!==null&&solPrice>0?eligiblePnlSol*solPrice:null;
   const tradePct=hasEligibleTrades&&totalBuyCostSol>0?eligiblePnlSol/totalBuyCostSol*100:null;
   const baselinePortfolio=typeof startValuation?.portfolio_usd==="number"&&startValuation.portfolio_usd>0?startValuation.portfolio_usd:null;
-  const change=tradeChange;
-  const pct=tradePct;
+  // Fallback for the indexing lag: mark only tokens absent from the match-start
+  // inventory. Compare each such position's first observed USD mark with its
+  // latest mark, so live price moves appear before transaction candidates index.
+  // This is a provisional display estimate, never settlement evidence.
+  const startBalances=(()=>{try{return JSON.parse(startSnapshot?.token_balances_json??"[]") as Array<{mint:string;amount:number}>;}catch{return [] as Array<{mint:string;amount:number}>;}})();
+  const startMints=new Set(startBalances.filter(t=>Number(t.amount)>0).map(t=>t.mint));
+  let livePositionDeltaUsd=0,livePositionBaselineUsd=0,livePositionMarks=0;
+  for(const token of latestTokens){
+    if(startMints.has(token.mint)||token.mint===solMint||typeof token.priceUsd!=="number"||token.priceUsd<=0)continue;
+    const firstMark=playerObservations.filter(o=>(startSec===null||o.observed_at>=startSec)&&Array.isArray(o.tokenBalances))
+      .flatMap(o=>(o.tokenBalances??[]).filter(t=>t.mint===token.mint&&typeof t.priceUsd==="number"&&t.priceUsd!>0).map(t=>({at:o.observed_at,value:t.amount*t.priceUsd!})))
+      .sort((a,b)=>a.at-b.at)[0];
+    if(!firstMark||!Number.isFinite(firstMark.value)||firstMark.value<=0)continue;
+    const currentValue=token.amount*token.priceUsd;
+    if(!Number.isFinite(currentValue))continue;
+    livePositionDeltaUsd+=currentValue-firstMark.value;
+    livePositionBaselineUsd+=firstMark.value;
+    livePositionMarks++;
+  }
+  const useLivePositionFallback=tradeChange===null&&livePositionMarks>0;
+  const change=tradeChange??(useLivePositionFallback?livePositionDeltaUsd:null);
+  const pct=tradePct??(useLivePositionFallback&&livePositionBaselineUsd>0?livePositionDeltaUsd/livePositionBaselineUsd*100:null);
+  const scoreSource=hasEligibleTrades?"eligible_trade_estimate":useLivePositionFallback?"live_position_mark":"waiting_for_eligible_trades";
   const last=latestPortfolioObservation?{observed_at:latestPortfolioObservation.observed_at,portfolio_usd:latestPortfolioObservation.portfolio_usd}:latestObservation?{observed_at:latestObservation.observed_at,portfolio_usd:latestObservation.portfolio_usd}:undefined;
-  return {...m,first:undefined,last,change,pct,scoreSource:hasEligibleTrades?"eligible_trade_estimate":"waiting_for_eligible_trades",samples:playerObservations.length,baselineValid:baselinePortfolio!==null,baselineSource:baselinePortfolio!==null?"match_start_inventory_snapshot":"match_start_inventory_snapshot_unavailable",eligibleBuyCount,eligibleSellCount,unpricedOpenLots};
+  return {...m,first:undefined,last,change,pct,scoreSource,samples:playerObservations.length,baselineValid:baselinePortfolio!==null,baselineSource:baselinePortfolio!==null?"match_start_inventory_snapshot":"match_start_inventory_snapshot_unavailable",eligibleBuyCount,eligibleSellCount,unpricedOpenLots};
 }),[members,observations,fillCandidates,activity?.events,room?.startedAt,room?.endsAt]);
  const percentageMode=true;
  const supportsTeamChat=Number(room?.maxPlayers??members.length)>2;
@@ -160,8 +181,10 @@ function CustomLiveMatch(){
   return (latest?.tokenBalances??[]).filter(t=>t.amount>0).map(t=>{
    const quote=quoteByMint.get(t.mint);
    const price=typeof t.priceUsd==="number"&&t.priceUsd>0?t.priceUsd:typeof quote?.priceUsd==="number"&&quote.priceUsd>0?quote.priceUsd:null;
-   const priorQuotes=samples.flatMap(o=>o.tokenBalances??[]).filter(p=>p.mint===t.mint&&typeof p.priceUsd==="number"&&p.priceUsd>0);
-   const old=priorQuotes.length>1?priorQuotes[priorQuotes.length-2]:undefined;
+   const priorQuotes=samples.flatMap(o=>o.tokenBalances??[]).filter(p=>p.mint===t.mint&&typeof p.priceUsd==="number"&&p.priceUsd>0).sort((a,b)=>a.priceUsd!-b.priceUsd!);
+   const priceHistory=samples.flatMap(o=>(o.tokenBalances??[]).filter(p=>p.mint===t.mint&&typeof p.priceUsd==="number"&&p.priceUsd!>0).map(p=>({at:o.observed_at,price:p.priceUsd!}))).sort((a,b)=>a.at-b.at);
+   const firstPrice=priceHistory[0]?.price;
+   const old=firstPrice!==undefined&&price!==null?{priceUsd:firstPrice}:undefined;
    const marketCap=typeof t.marketCapUsd==="number"&&t.marketCapUsd>0?t.marketCapUsd:quote?.marketCapUsd??null;
    return {wallet:member.wallet,mint:t.mint,amount:t.amount,name:t.name??quote?.name??null,symbol:t.symbol??quote?.symbol??null,pairUrl:t.pairUrl??quote?.pairUrl??("https://pump.fun/coin/"+t.mint),marketCapUsd:marketCap,priceUsd:price,valueUsd:price!==null?t.amount*price:typeof t.valueUsd==="number"?t.valueUsd:null,priceChangePct:old&&price!==null?(price/old.priceUsd!-1)*100:null};
   });
