@@ -181,7 +181,6 @@ function CustomLiveMatch(){
   return (latest?.tokenBalances??[]).filter(t=>t.amount>0).map(t=>{
    const quote=quoteByMint.get(t.mint);
    const price=typeof t.priceUsd==="number"&&t.priceUsd>0?t.priceUsd:typeof quote?.priceUsd==="number"&&quote.priceUsd>0?quote.priceUsd:null;
-   const priorQuotes=samples.flatMap(o=>o.tokenBalances??[]).filter(p=>p.mint===t.mint&&typeof p.priceUsd==="number"&&p.priceUsd>0).sort((a,b)=>a.priceUsd!-b.priceUsd!);
    const priceHistory=samples.flatMap(o=>(o.tokenBalances??[]).filter(p=>p.mint===t.mint&&typeof p.priceUsd==="number"&&p.priceUsd!>0).map(p=>({at:o.observed_at,price:p.priceUsd!}))).sort((a,b)=>a.at-b.at);
    const firstPrice=priceHistory[0]?.price;
    const old=firstPrice!==undefined&&price!==null?{priceUsd:firstPrice}:undefined;
