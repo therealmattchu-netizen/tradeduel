@@ -72,7 +72,7 @@ export function CustomMatchBrowser() {
         setSelected(previous => previous && previous.id === selected.id
           ? { ...previous, status: room.status, players_count: room.members?.length ?? previous.players_count }
           : previous);
-        if (room.status === "active" && room.members?.length >= room.maxPlayers) {
+        if (room.status === "active") {
           window.location.assign("/custom-match/" + encodeURIComponent(selected.id));
         }
       } catch {
@@ -90,7 +90,7 @@ export function CustomMatchBrowser() {
     if (!selected) { setLiveActivity(null); setVerifiedSettlement(null); return; }
     let alive=true;
     const pollActivity=async()=>{ const token=window.sessionStorage.getItem("td_session_token")||""; if(!token)return; try { const activity=await syncMatchActivity({data:{token,matchId:selected.id}}) as any; if(!alive)return; setLiveActivity((previous:any)=>{const incoming=activity.customRoom;const current=previous?.customRoom;const rank=(status:string)=>status==="completed"?3:status==="active"?2:status==="open"?1:0;const preferCurrent=current&&incoming&&rank(current.status)>rank(incoming.status)?current:incoming;return {...(previous??{}),...activity,customRoom:preferCurrent??current};}); if(activity.customRoom) setSelected(previous=>{if(!previous||previous.id!==selected.id)return previous;const currentStatus=previous.status;const incomingStatus=activity.customRoom.status;const rank=(status:string)=>status==="completed"?3:status==="active"?2:status==="open"?1:0;return {...previous,status:rank(currentStatus)>rank(incomingStatus)?currentStatus:incomingStatus,players_count:Math.max(previous.players_count??0,activity.customRoom.members?.length??0)};});
-      if(activity.customRoom?.status === "active" && activity.customRoom.members?.length >= activity.customRoom.maxPlayers) {
+      if(activity.customRoom?.status === "active") {
         window.location.assign("/custom-match/" + encodeURIComponent(selected.id));
       } if(activity.customRoom?.status==="completed"){try{const settlement=await reconcileCustomMatchSettlement({data:{token,matchId:selected.id}}) as any;if(alive)setVerifiedSettlement(settlement);}catch(error){if(alive)setNotice(error instanceof Error?error.message:"Team PnL reconciliation is waiting for evidence.");}} } catch(error) { if(alive) setNotice(error instanceof Error?error.message:"Live match activity could not be synchronized."); } };
     void pollActivity(); const pollTimer=window.setInterval(()=>void pollActivity(),10000); const clockTimer=window.setInterval(()=>setClockNow(Date.now()),1000);
