@@ -736,10 +736,10 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     const members = await DB.prepare("SELECT wallet,team_number FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(match.id).all<{wallet:string;team_number:number}>();
     if (room) customRoom={status:room.status,startedAt:room.started_at,endsAt:room.ends_at,mode:room.mode,maxPlayers:room.max_players,members:members.results??[]};
     if (room?.status === "completed") {
-      const memberReturns=(members.results??[]).map(member=>{const samples=(observations.results??[]).filter(row=>row.wallet===member.wallet&&row.complete&&row.portfolio_usd!==null&&Number.isFinite(row.portfolio_usd)).sort((a,b)=>a.observed_at-b.observed_at);const first=samples[0],latest=samples[samples.length-1];const returnPct=first&&latest&&first.portfolio_usd!==null&&latest.portfolio_usd!==null&&first.portfolio_usd>0?((latest.portfolio_usd-first.portfolio_usd)/first.portfolio_usd)*100:null;return {wallet:member.wallet,team:member.team_number,returnPct,firstObservedAt:first?.observed_at??null,lastObservedAt:latest?.observed_at??null,sampleCount:samples.length};});
+      const matchStartSec=room?.started_at?Math.floor(new Date(room.started_at).getTime()/1000):null;const matchEndSec=room?.ends_at?Math.floor(new Date(room.ends_at).getTime()/1000):null;const memberReturns=(members.results??[]).map(member=>{const startSnap=(valuations.results??[]).find(row=>row.wallet===member.wallet&&row.phase==="start"&&row.complete&&row.portfolio_usd!==null&&matchStartSec!==null&&Math.abs(row.observed_at-matchStartSec)<=120);const endSnap=(valuations.results??[]).find(row=>row.wallet===member.wallet&&row.phase==="end"&&row.complete&&row.portfolio_usd!==null&&matchEndSec!==null&&Math.abs(row.observed_at-matchEndSec)<=120);const returnPct=startSnap&&endSnap&&startSnap.portfolio_usd!==null&&endSnap.portfolio_usd!==null&&startSnap.portfolio_usd>0?((endSnap.portfolio_usd-startSnap.portfolio_usd)/startSnap.portfolio_usd)*100:null;return {wallet:member.wallet,team:member.team_number,returnPct,firstObservedAt:startSnap?.observed_at??null,lastObservedAt:endSnap?.observed_at??null,sampleCount:(observations.results??[]).filter(row=>row.wallet===member.wallet&&row.complete).length,baselineStatus:startSnap?"valid":"missing_or_outside_start_window",endStatus:endSnap?"valid":"missing_or_outside_end_window"};});
       const teamScore=(teamNumber:number)=>{const scores=memberReturns.filter(row=>row.team===teamNumber&&row.returnPct!==null).map(row=>row.returnPct as number);return scores.length?scores.reduce((sum,value)=>sum+value,0)/scores.length:null;};
       const blockers=[ "official_scoring_disabled", "portfolio_values_are_estimates", "transaction_fill_reconciliation_incomplete" ];
-      if(memberReturns.some(row=>row.returnPct===null))blockers.push("one_or_more_members_lack_two_complete_observations");
+      if(memberReturns.some(row=>row.returnPct===null))blockers.push("missing_complete_start_or_end_snapshot_within_120_second_boundary");
       if((accountingRows.results??[]).some(row=>JSON.parse(row.blockers_json).length>0))blockers.push("transaction_ledger_contains_unresolved_evidence");
       await DB.prepare("INSERT INTO td_custom_match_settlements (match_id,status,team_one_return_pct,team_two_return_pct,member_returns_json,blockers_json,indexed_transactions,updated_at) VALUES (? ,'blocked',?,?,?,?,?,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET status='blocked',team_one_return_pct=excluded.team_one_return_pct,team_two_return_pct=excluded.team_two_return_pct,member_returns_json=excluded.member_returns_json,blockers_json=excluded.blockers_json,indexed_transactions=excluded.indexed_transactions,updated_at=datetime('now')").bind(match.id,teamScore(1),teamScore(2),JSON.stringify(memberReturns),JSON.stringify([...new Set(blockers)]),(accountingRows.results??[]).length).run();
     }
@@ -1127,7 +1127,7 @@ export const sendMatchChatMessage = createServerFn({ method: "POST" })
   });
 
 
-const customMatchMode = z.enum(["head_to_head", "duo", "group"]);
+const customMatchMode = z.enum(["head_to_head", "head_to_head_percentage", "duo", "group"]);
 const customMatchVisibility = z.enum(["public", "private"]);
 
 /** Public/private room browser. Private room passwords are never returned to clients. */
@@ -1234,7 +1234,7 @@ export const createCustomMatch = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    const expected = data.mode === "head_to_head" ? 2 : data.mode === "duo" ? 4 : data.maxPlayers;
+    const expected = (data.mode === "head_to_head" || data.mode === "head_to_head_percentage") ? 2 : data.mode === "duo" ? 4 : data.maxPlayers;
     if (data.maxPlayers !== expected || (data.mode === "group" && ![6,8].includes(data.maxPlayers))) {
       throw new Error("Invalid player limit for the selected match mode.");
     }
@@ -1268,7 +1268,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     }
     const counts = await DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN team_number=1 THEN 1 ELSE 0 END) AS team_one FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number;team_one:number|null}>();
     if ((counts?.total ?? 0) >= match.max_players) throw new Error("This match is full.");
-    const teamSize = match.mode === "head_to_head" ? 1 : match.max_players / 2;
+    const teamSize = (match.mode === "head_to_head" || match.mode === "head_to_head_percentage") ? 1 : match.max_players / 2;
     const team = (counts?.team_one ?? 0) < teamSize ? 1 : 2;
     await DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(match.id,wallet,team).run();
     const after = await DB.prepare("SELECT COUNT(*) AS total FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number}>();
