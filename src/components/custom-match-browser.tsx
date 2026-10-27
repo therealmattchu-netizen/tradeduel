@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { createCustomMatch, getCustomMatchChat, getCustomMatchStatus, joinCustomMatch, listCustomMatches, sendCustomMatchChat, syncMatchActivity, reconcileCustomMatchSettlement } from "@/lib/api/arena.functions";
+import { createCustomMatch, getCustomMatchChat, getCustomMatchStatus, getMyRating, getWalletPortfolioEstimate, joinCustomMatch, listCustomMatches, sendCustomMatchChat, syncMatchActivity, reconcileCustomMatchSettlement } from "@/lib/api/arena.functions";
 
 type CustomMatch = { id:string; creator_wallet:string; mode:string; visibility:string; max_players:number; duration_seconds:number; status:string; created_at:string; players_count:number };
 type ChatMessage = { id:number; wallet:string; channel:string; message:string; created_at:string; team_number:number };
@@ -28,6 +28,7 @@ export function CustomMatchBrowser() {
   const [liveActivity,setLiveActivity] = useState<any>(null);
   const [verifiedSettlement,setVerifiedSettlement] = useState<any>(null);
   const [clockNow,setClockNow] = useState(Date.now());
+  const [walletMatchBand,setWalletMatchBand] = useState(20);
 
   const refresh = useCallback(async () => {
     try { const result = await listCustomMatches(); setMatches(result.matches as CustomMatch[]); }
@@ -126,6 +127,36 @@ export function CustomMatchBrowser() {
     finally{setBusy(false);}
   };
 
+  const findWalletMatchedOpponent = async () => {
+    const token=window.sessionStorage.getItem("td_session_token")||"";
+    if(!token){setNotice("Connect and verify your wallet before using wallet-value matchmaking.");return;}
+    if(mode!=="head_to_head"){setNotice("Wallet-value matchmaking is currently available for 1v1 duels only.");return;}
+    setBusy(true);setNotice("Estimating wallet values and searching for a compatible opponent…");
+    try {
+      const me=await getMyRating({data:{token}});
+      const mine=await getWalletPortfolioEstimate({data:{wallet:me.wallet}}) as any;
+      if(!mine.complete||typeof mine.portfolioValueUsd!=="number"||mine.portfolioValueUsd<=0){
+        setNotice("Your portfolio estimate is incomplete because one or more holdings could not be priced. Try again later or use standard matchmaking.");return;
+      }
+      const effectiveMode=scoringMode==="percentage"?"head_to_head_percentage":"head_to_head";
+      const candidates=matches.filter(match=>match.visibility==="public"&&match.status==="open"&&match.players_count===1&&match.max_players===2&&match.duration_seconds===duration&&match.mode===effectiveMode&&match.creator_wallet&&match.creator_wallet!==me.wallet);
+      if(!candidates.length){setNotice("No compatible public 1v1 rooms are waiting. Create a public duel, or try standard matchmaking.");return;}
+      const estimates=await Promise.all(candidates.map(async match=>{
+        try {
+          const estimate=await getWalletPortfolioEstimate({data:{wallet:match.creator_wallet}}) as any;
+          if(!estimate.complete||typeof estimate.portfolioValueUsd!=="number"||estimate.portfolioValueUsd<=0)return null;
+          const differencePct=Math.abs(estimate.portfolioValueUsd-mine.portfolioValueUsd)/mine.portfolioValueUsd*100;
+          return {match,estimate,differencePct};
+        } catch {return null;}
+      }));
+      const best=estimates.filter((item):item is NonNullable<typeof item>=>item!==null&&item.differencePct<=walletMatchBand).sort((x,y)=>x.differencePct-y.differencePct)[0];
+      if(!best){setNotice("No waiting wallet is within "+walletMatchBand+"% of your estimated portfolio value. Leave this search open and refresh, or widen the balance range.");return;}
+      setNotice("Closest wallet found: estimated portfolio values differ by "+best.differencePct.toFixed(1)+"%. Joining room…");
+      await join(best.match);
+    } catch(error){setNotice(error instanceof Error?error.message:"Wallet-value matchmaking couldn't estimate portfolios. Try again.");}
+    finally{setBusy(false);}
+  };
+
   const send = async () => {
     const token=window.sessionStorage.getItem("td_session_token")||"";
     if(!selected||!draft.trim()||!token)return;
@@ -157,7 +188,7 @@ export function CustomMatchBrowser() {
     </div>}
     {activePanel==="browse"&&<div style={cardStyle}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexWrap:"wrap"}}><div><p className="td-overline">PUBLIC LOBBIES</p><h2>Find an open match</h2></div><button style={buttonStyle} onClick={()=>void refresh()}>Refresh</button></div>
-      <p>Choose an open public room and join when a slot is available. Private rooms are not listed publicly; use the room ID and password in the private lobby panel.</p>
+      <p>Choose an open public room and join when a slot is available. Private rooms are not listed publicly; use the room ID and password in the private lobby panel.</p><div style={{...cardStyle,marginBottom:14}}><p className="td-overline">BALANCED WALLET MATCHMAKING · BETA</p><h3 style={{margin:"4px 0 8px"}}>Find a similarly sized portfolio</h3><p>Compares current SOL plus priced token holdings and picks the closest waiting public 1v1 opponent within your selected range. Wallet estimates are approximate and any unpriced holdings make a wallet ineligible.</p><div style={{display:"flex",gap:10,alignItems:"end",flexWrap:"wrap"}}><label style={{minWidth:180}}>MAX PORTFOLIO DIFFERENCE<select style={fieldStyle} value={walletMatchBand} onChange={e=>setWalletMatchBand(Number(e.target.value))}><option value={10}>Within 10%</option><option value={20}>Within 20%</option><option value={30}>Within 30%</option><option value={50}>Within 50%</option></select></label><button type="button" style={{...buttonStyle,background:"linear-gradient(135deg,#8b45f6,#5b2cbd)",borderColor:"#ad83ff",fontWeight:750}} disabled={busy||mode!=="head_to_head"} onClick={()=>void findWalletMatchedOpponent()}>{busy?"Searching…":"Find closest wallet"}</button></div>{mode!=="head_to_head"&&<small>Switch to 1v1 Duel to use balance-based matchmaking.</small>}</div>
       <div style={{display:"grid",gap:10}}>{matches.filter(match=>match.visibility==="public"&&match.status==="open"&&match.players_count<match.max_players).length===0?<p>No public rooms open yet. Create one from Game modes.</p>:matches.filter(match=>match.visibility==="public"&&match.status==="open"&&match.players_count<match.max_players).map(match=><div key={match.id} style={{border:"1px solid var(--td-border)",borderRadius:8,padding:12,display:"grid",gridTemplateColumns:"minmax(0,1fr) auto",gap:12,alignItems:"center"}}><div><strong>{modeName(match.mode)}</strong><div style={{fontSize:12,color:"var(--td-muted)",marginTop:4}}>{match.players_count}/{match.max_players} players · {Math.round(match.duration_seconds/60)} min · {match.status}</div><div style={{fontSize:11,color:"var(--td-muted)",marginTop:4}}>Room {match.id.slice(0,8).toUpperCase()}</div></div><button style={buttonStyle} disabled={busy||match.players_count>=match.max_players||match.status!=="open"} onClick={()=>void join(match)}>{match.players_count>=match.max_players?"Full":match.status==="active"?"In progress":"Join"}</button></div>)}</div>
     </div>}
     {selected&&<div style={cardStyle}>
