@@ -177,7 +177,7 @@ export const joinMatchmakingQueue = createServerFn({ method: "POST" }).validator
     await DB.prepare("UPDATE td_queue SET status = 'waiting' WHERE wallet = ? AND status = 'matching'").bind(opponent.wallet).run();
     throw error;
   }
-  return { status: "matched", matchId, message: "Opponent found. Competitive test match started; trade evidence is collected, but official ELO scoring is not active yet." };
+  return { status: "matched", matchId, message: "Legacy matchmaking is retired. Use public/private match lobbies for the current match flow." };
 });
 
 export const leaveMatchmakingQueue = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24) })).handler(async ({ data }) => {
