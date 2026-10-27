@@ -25,7 +25,10 @@ type AppEnv = {
   HF_ENV?: string;
   APP_SLUG?: string;
   // Explicit wallet-signing domain per deployment (preview and production differ).
-  TRADEDUEL_WALLET_DOMAIN?: string;\n  // Comma-separated provider URLs; configure a dedicated paid RPC for production.\n  SOLANA_RPC_URL?: string;\n  SOLANA_RPC_URLS?: string;
+  TRADEDUEL_WALLET_DOMAIN?: string;
+  // Comma-separated provider URLs; configure a dedicated RPC endpoint for production.
+  SOLANA_RPC_URL?: string;
+  SOLANA_RPC_URLS?: string;
 };
 
 export function bindings(): AppEnv {
