@@ -16,6 +16,8 @@ const tokenPrice=(n:number|null|undefined)=>{if(n==null||!Number.isFinite(n)||n<
 const percent=(n:number)=>Math.abs(n)>0&&Math.abs(n)<0.01?n.toFixed(4):n.toFixed(2);
 function CustomLiveMatch(){
  const {matchId}=Route.useParams();
+ const [room,setRoom]=useState<any>(null); const [activity,setActivity]=useState<any>(null); const [matchIntro,setMatchIntro]=useState(true);
+ const [wallet,setWallet]=useState(""); const [profiles,setProfiles]=useState<Record<string,{displayName:string;avatarDataUrl:string|null}>>({}); const [error,setError]=useState("");
  // Keep a durable in-tab pointer so players can return to this room after navigating away.
  useEffect(()=>{
   const key="td_active_custom_match_id";
@@ -26,8 +28,6 @@ function CustomLiveMatch(){
   };
   sync();
  },[matchId,room?.status]);
- const [room,setRoom]=useState<any>(null); const [activity,setActivity]=useState<any>(null); const [matchIntro,setMatchIntro]=useState(true);
- const [wallet,setWallet]=useState(""); const [profiles,setProfiles]=useState<Record<string,{displayName:string;avatarDataUrl:string|null}>>({}); const [error,setError]=useState("");
  const [chat,setChat]=useState<Chat[]>([]); const [draft,setDraft]=useState(""); const [channel,setChannel]=useState<"all"|"team">("all");
  const [now,setNow]=useState(Date.now()); const [latestId,setLatestId]=useState(0); const [settlementReport,setSettlementReport]=useState<any>(null); const [officialResults,setOfficialResults]=useState<any[]>([]); const [rematch,setRematch]=useState<any>(null); const [rematchChecked,setRematchChecked]=useState(false); const [rematchBusy,setRematchBusy]=useState(false); const [rematchMessage,setRematchMessage]=useState(""); const [surrenderBusy,setSurrenderBusy]=useState(false); const [surrenderNotice,setSurrenderNotice]=useState(""); const [resultDismissed,setResultDismissed]=useState(false); const resultSoundPlayed=useRef(false); const chatHasInitialized=useRef(false);
  useEffect(()=>{if(room?.status!=="active"||!matchIntro)return;try{const Ctx=window.AudioContext||(window as any).webkitAudioContext;const ctx=new Ctx();void ctx.resume();const now=ctx.currentTime;for(const [freq,delay,dur] of [[880,0,.09],[520,.045,.16],[1320,.055,.08]] as number[][]){const osc=ctx.createOscillator();const gain=ctx.createGain();osc.type="triangle";osc.frequency.setValueAtTime(freq,now+delay);osc.frequency.exponentialRampToValueAtTime(Math.max(80,freq*.38),now+delay+dur);gain.gain.setValueAtTime(.0001,now+delay);gain.gain.exponentialRampToValueAtTime(.14,now+delay+.008);gain.gain.exponentialRampToValueAtTime(.0001,now+delay+dur);osc.connect(gain);gain.connect(ctx.destination);osc.start(now+delay);osc.stop(now+delay+dur+.01);}window.setTimeout(()=>void ctx.close(),600);}catch{/* Autoplay may be blocked; overlay includes a replay control. */}},[room?.status,matchIntro]);
