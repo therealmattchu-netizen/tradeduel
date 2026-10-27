@@ -884,13 +884,6 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       .slice(0, 8);
     await Promise.all(pumpFallbackMints.map(async mint => {
       try {
-        // The current Pump.fun frontend API exposes coin metadata at /coins-v2/{mint}.
-        // Keep the older /coins/{mint} path as a compatibility fallback because the
-        // frontend API is undocumented and can vary across deployments.
-        const endpoints = [
-          "https://frontend-api-v3.pump.fun/coins-v2/" + encodeURIComponent(mint),
-          "https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
-        ];
         type PumpCoin = {
           name?: string; symbol?: string; usd_market_cap?: number | string;
           market_cap_usd?: number | string; market_cap?: number | string;
