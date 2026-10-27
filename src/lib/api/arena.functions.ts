@@ -564,8 +564,8 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   for (const trackedWallet of participants) {
   // Page signatures from a durable cursor and queue them before processing. This
   // prevents the old fixed-latest-100 scan from permanently missing older match activity.
-  let state = await DB.prepare("SELECT before_signature,exhausted FROM td_match_index_state WHERE match_id = ? AND wallet = ?")
-    .bind(match.id, trackedWallet).first<{before_signature:string|null;exhausted:number}>();
+  let state = await DB.prepare("SELECT before_signature,exhausted,last_checked_at FROM td_match_index_state WHERE match_id = ? AND wallet = ?")
+    .bind(match.id, trackedWallet).first<{before_signature:string|null;exhausted:number;last_checked_at:string|null}>();
   try {
     // Always ingest the newest signatures on every room sync, even while the
     // historical cursor is still paging backwards. Previously, recent discovery
@@ -579,7 +579,9 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     }
     // In parallel with live discovery, advance one durable historical page until
     // the match start boundary is crossed. INSERT OR IGNORE makes overlap safe.
-    if (!state || !state.exhausted) {
+    const lastHistoricalCheck = state?.last_checked_at ? Date.parse(state.last_checked_at.replace(" ","T")+"Z") : 0;
+    const historicalCheckDue = !state || !state.exhausted || !Number.isFinite(lastHistoricalCheck) || Date.now()-lastHistoricalCheck>=30000;
+    if (historicalCheckDue && (!state || !state.exhausted)) {
       const options:Record<string,unknown> = {limit:100,commitment:"confirmed"};
       if (state?.before_signature) options.before = state.before_signature;
       const page = await rpcCall("getSignaturesForAddress",[trackedWallet,options]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
@@ -603,7 +605,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   // Quarantine repeatedly unavailable transactions rather than retrying them on every room poll.
   await DB.prepare("UPDATE td_match_index_queue SET status='skipped',last_error=COALESCE(last_error,'retry_limit_reached'),updated_at=datetime('now') WHERE match_id=? AND wallet=? AND status='retry' AND attempts>=8")
     .bind(match.id,trackedWallet).run();
-  const pending = await DB.prepare("SELECT signature,slot,block_time,tx_error_json FROM td_match_index_queue WHERE match_id = ? AND wallet = ? AND (status='pending' OR (status='retry' AND attempts<8 AND updated_at<=datetime('now','-2 minutes'))) ORDER BY block_time DESC,id DESC LIMIT 12")
+  const pending = await DB.prepare("SELECT signature,slot,block_time,tx_error_json FROM td_match_index_queue WHERE match_id = ? AND wallet = ? AND (status='pending' OR (status='retry' AND attempts<8 AND updated_at<=datetime('now','-2 minutes'))) ORDER BY block_time DESC,id DESC LIMIT 3")
     .bind(match.id,trackedWallet).all<{signature:string;slot:number;block_time:number|null;tx_error_json:string|null}>();
   let walletIndexed = 0;
   for (const sig of pending.results ?? []) {
