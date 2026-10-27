@@ -371,11 +371,26 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       { name: "spl-token", id: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" },
       { name: "token-2022", id: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" },
     ];
-    const [balanceResult, signatureResult, ...tokenAccountResults] = await Promise.all([
+    const trackingWarnings: string[] = [];
+    const [balanceAttempt, signatureAttempt, ...tokenAccountAttempts] = await Promise.allSettled([
       call("getBalance", [wallet, { commitment: "confirmed" }]) as Promise<{ value: number }>,
       call("getSignaturesForAddress", [wallet, { limit: 20, commitment: "confirmed" }]) as Promise<Array<{signature:string;blockTime:number|null;err:unknown;confirmationStatus:string|null}>>,
-      ...tokenPrograms.map(program => call("getTokenAccountsByOwner", [wallet, { programId: program.id }, { encoding: "jsonParsed", commitment: "confirmed" }]).catch(() => ({ value: [] })) as Promise<ParsedTokenAccounts>),
+      ...tokenPrograms.map(program => call("getTokenAccountsByOwner", [wallet, { programId: program.id }, { encoding: "jsonParsed", commitment: "confirmed" }]) as Promise<ParsedTokenAccounts>),
     ]);
+    // A signatures endpoint failure must not take down otherwise healthy balance/position
+    // tracking. Conversely, never silently report a failed token-account query as zero holdings.
+    if (balanceAttempt.status === "rejected") {
+      throw new Error("Could not retrieve this wallet's SOL balance from available Solana RPC providers. Try again shortly.");
+    }
+    const balanceResult = balanceAttempt.value;
+    const signatureResult = signatureAttempt.status === "fulfilled" ? signatureAttempt.value : [];
+    if (signatureAttempt.status === "rejected") trackingWarnings.push("Recent transaction history is temporarily unavailable; balance and positions may still be shown.");
+    const tokenAccountResults: ParsedTokenAccounts[] = tokenAccountAttempts.map((attempt, index) => {
+      if (attempt.status === "fulfilled") return attempt.value;
+      trackingWarnings.push(`The ${tokenPrograms[index].name} token-account query failed; holdings and PnL may be incomplete.`);
+      return { value: [] };
+    });
+    const tokenAccountsComplete = tokenAccountAttempts.every(attempt => attempt.status === "fulfilled");
     const holdings = new Map<string, {mint:string;amount:number;programs:Set<string>}>();
     for (let i=0;i<tokenAccountResults.length;i++) {
       const result = tokenAccountResults[i] as ParsedTokenAccounts;
@@ -412,12 +427,21 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
     const sellCandidates: Array<{signature:string;blockTime:number|null;mint:string;amount:number;quoteAsset:"SOL"|"USDC";quoteAmount:number;estimatedProceedsUsd:number|null}> = [];
     // Inspect recent and newly indexed historical transactions. Events remain candidates
     // because transfers, liquidity operations, and multi-leg swaps can resemble trades.
-    const txResults = await Promise.all(scanSignatures.map(async sig => {
-      if (sig.err !== null) return null;
-      try {
-        return { sig, tx: await call("getTransaction", [sig.signature, { encoding:"jsonParsed", commitment:"confirmed", maxSupportedTransactionVersion:0 }]) as any };
-      } catch { return null; }
-    }));
+    const txResults: Array<{sig: typeof scanSignatures[number]; tx: any} | null> = [];
+    // Bound concurrency to avoid bursts of 100 RPC requests, which can trigger provider
+    // throttling and make a single wallet look permanently broken.
+    for (let offset = 0; offset < scanSignatures.length; offset += 8) {
+      const batch = await Promise.all(scanSignatures.slice(offset, offset + 8).map(async sig => {
+        if (sig.err !== null) return null;
+        try {
+          return { sig, tx: await call("getTransaction", [sig.signature, { encoding:"jsonParsed", commitment:"confirmed", maxSupportedTransactionVersion:0 }]) as any };
+        } catch {
+          trackingWarnings.push("Some transaction details could not be loaded and will be retried on a later refresh.");
+          return null;
+        }
+      }));
+      txResults.push(...batch);
+    }
     for (const item of txResults) {
       if (!item?.tx?.meta) continue;
       const tx=item.tx;
@@ -494,8 +518,9 @@ export const trackPublicWallet = createServerFn({ method: "POST" })
       wallet,
       balanceSol: balanceResult.value / 1_000_000_000,
       signatures: signatures.map((sig) => ({ signature: sig.signature, blockTime: sig.blockTime, success: sig.err === null, confirmationStatus: sig.confirmationStatus })),
+      trackingWarnings: [...new Set(trackingWarnings)],
       positions:trackedPositions,
-      estimatedTokenValueUsd: unpricedPositions===0?pricedValue:null,
+      estimatedTokenValueUsd: tokenAccountsComplete && unpricedPositions===0?pricedValue:null,
       unpricedPositions,
       trackedBuyCount,
       estimatedTotalSpentUsd:trackedSpend,
