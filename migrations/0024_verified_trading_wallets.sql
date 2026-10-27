@@ -9,5 +9,12 @@ CREATE TABLE IF NOT EXISTS td_trading_wallets (
   CHECK (length(trading_wallet) BETWEEN 32 AND 44),
   CHECK (owner_wallet <> trading_wallet)
 );
-CREATE INDEX IF NOT EXISTS idx_td_trading_wallets_trading_wallet
-  ON td_trading_wallets(trading_wallet);
+CREATE TABLE IF NOT EXISTS td_trading_wallet_challenges (
+  nonce TEXT PRIMARY KEY,
+  owner_wallet TEXT NOT NULL,
+  trading_wallet TEXT NOT NULL,
+  message TEXT NOT NULL,
+  expires_at INTEGER NOT NULL,
+  used INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_td_trading_wallets_trading_wallet ON td_trading_wallets(trading_wallet);
