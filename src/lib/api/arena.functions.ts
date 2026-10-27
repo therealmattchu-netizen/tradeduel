@@ -2028,9 +2028,21 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
            const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+encodeURIComponent(mint),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});
            if(!response.ok)return;
            const body=await response.json() as {pairs?:Array<Pair&{quoteToken?:{address?:string}} >};
-           const pair=(body.pairs??[]).filter(p=>p.baseToken?.address===mint&&Number(p.priceUsd)>0&&Number(p.liquidity?.usd??0)>=25)
+           const pair=(body.pairs??[]).filter(p=>(p.baseToken?.address===mint||p.quoteToken?.address===mint)&&Number(p.priceUsd)>0&&Number(p.liquidity?.usd??0)>=25)
              .sort((x,y)=>Number(y.liquidity?.usd??0)-Number(x.liquidity?.usd??0))[0];
-           if(pair){prices.set(mint,Number(pair.priceUsd));liquidity.set(mint,Number(pair.liquidity?.usd??0));const cap=Number(pair.marketCap??pair.fdv??0);if(cap>0)caps.set(mint,cap);names.set(mint,{name:pair.baseToken?.name??null,symbol:pair.baseToken?.symbol??null,pairUrl:pair.url??null});}
+           if(pair){
+             const isBase=pair.baseToken?.address===mint;
+             const direct=Number(pair.priceUsd);
+             const native=Number(pair.priceNative);
+             // DexScreener reports priceUsd for the base token. If the tracked mint is
+             // the quote token, infer its USD mark from the base USD price / native ratio.
+             const inferredQuotePrice=!isBase&&native>0?direct/native:null;
+             const price=isBase?direct:inferredQuotePrice;
+             if(price&&Number.isFinite(price)&&price>0)prices.set(mint,price);
+             liquidity.set(mint,Number(pair.liquidity?.usd??0));
+             if(isBase){const cap=Number(pair.marketCap??pair.fdv??0);if(cap>0)caps.set(mint,cap);}
+             names.set(mint,{name:isBase?(pair.baseToken?.name??null):(pair.quoteToken?.name??null),symbol:isBase?(pair.baseToken?.symbol??null):(pair.quoteToken?.symbol??null),pairUrl:pair.url??null});
+           }
          }catch{}}));
          const stillMissing=missing.filter(mint=>!prices.has(mint));
         type PumpCoin={name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string};
