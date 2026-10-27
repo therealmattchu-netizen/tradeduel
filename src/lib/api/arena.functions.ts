@@ -268,39 +268,38 @@ function solanaRpcEndpoints(): string[] {
 /** RPC failover: try configured providers first, then independent public fallbacks.
  * A provider returning an RPC error or HTTP throttle is never treated as valid data. */
 async function solanaRpcCall(method: string, params: unknown[]) {
+  // Keep interactive requests bounded. The former nested retry across every public
+  // fallback could occupy a request for minutes when providers stalled, freezing the
+  // entire match response (including prices). Try a small number of independent hosts
+  // once each; the next client poll naturally retries with fresh provider rotation.
   const failures: string[] = [];
-  const endpoints = solanaRpcEndpoints();
+  const endpoints = solanaRpcEndpoints().slice(0, 4);
   for (const endpoint of endpoints) {
     let lastFailure = "request failed";
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-          signal: AbortSignal.timeout(4500),
-        });
-        if (response.status === 429 || response.status >= 500) {
-          lastFailure = `HTTP ${response.status}`;
-          if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1))); continue; }
-          break;
-        }
-        if (!response.ok) { lastFailure = `HTTP ${response.status}`; break; }
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(2200),
+      });
+      if (response.status === 429 || response.status >= 500) lastFailure = `HTTP ${response.status}`;
+      else if (!response.ok) lastFailure = `HTTP ${response.status}`;
+      else {
         const json = await response.json() as { result?: unknown; error?: { code?: number; message?: string } };
-        if (json.error) { lastFailure = json.error.message || "RPC error"; break; }
-        if (!("result" in json)) { lastFailure = "missing result"; break; }
-        return json.result;
-      } catch (error) {
-        lastFailure = error instanceof Error ? error.message : "request failed";
-        if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, 150)); continue; }
+        if (json.error) lastFailure = json.error.message || "RPC error";
+        else if (!("result" in json)) lastFailure = "missing result";
+        else return json.result;
       }
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : "request failed";
     }
     let host = "invalid-endpoint";
     try { host = new URL(endpoint).hostname; } catch {}
     failures.push(`${host}: ${lastFailure}`);
   }
-  console.error("Solana mainnet RPC providers failed", { method, providerCount: endpoints.length, failures });
-  throw new Error("Solana mainnet RPC is temporarily unavailable across all configured providers. Configure a dedicated Solana RPC URL for production and retry.");
+  console.error("Solana mainnet RPC providers failed within live-request budget", { method, providerCount: endpoints.length, failures });
+  throw new Error("Solana RPC did not respond in time. The live portfolio will retry automatically; configure a healthy dedicated RPC endpoint for production.");
 }
 
 /** Lightweight, read-only portfolio estimate for wallet-value matchmaking.
