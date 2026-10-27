@@ -1091,6 +1091,9 @@ export const reconcileMatchSettlement = createServerFn({ method: "POST" }).valid
   const get = (player:string,phase:string) => rows.find(r=>r.wallet===player&&r.phase===phase);
   const p1s=get(match.player_one,"start"), p1e=get(match.player_one,"end"), p2s=get(match.player_two,"start"), p2e=get(match.player_two,"end");
   const blockers:string[]=[];
+  // Legacy standard matches use whole-wallet snapshot P&L, which counts pre-match holdings.
+  // They are retired from the UI and must not apply ELO from this invalid scoring basis.
+  blockers.push("eligible_trade_pnl_server_reconciliation_required");
   if(match.status!=="completed" || !match.ends_at || new Date(match.ends_at).getTime()>Date.now()) blockers.push("match_not_expired");
   for (const [player,phase] of [[match.player_one,"start"],[match.player_one,"end"],[match.player_two,"start"],[match.player_two,"end"]] as Array<[string,"start"|"end"]>) {
     const snapshot = rows.find(row=>row.wallet===player&&row.phase===phase);
@@ -1146,6 +1149,10 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
     const roster = members.results ?? [];
     if (!roster.some(m=>m.wallet===wallet)) throw new Error("Only room members can reconcile this match.");
     const blockers:string[]=[];
+    // Safety gate: the legacy settlement formula below compares whole-wallet start/end snapshots.
+    // That wrongly counts pre-match holdings and their price movement, so it must never award ELO.
+    // Keep results pending until server-side trade-level P&L reconciliation is the source of returns.
+    blockers.push("eligible_trade_pnl_server_reconciliation_required");
     if (match.status!=="completed" || !match.ends_at || new Date(match.ends_at).getTime()>Date.now()) blockers.push("match_not_expired");
     if (roster.length!==match.max_players) blockers.push("incomplete_roster");
     if (!match.started_at || !match.ends_at) blockers.push("match_boundaries_missing");
