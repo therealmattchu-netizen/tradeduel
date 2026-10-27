@@ -1442,6 +1442,19 @@ export const sendCustomMatchChat = createServerFn({ method: "POST" })
   });
 
 
+
+/** Public profile cards for wallets shown in leaderboard, spectator, and match views. */
+export const getPublicProfiles = createServerFn({ method: "POST" })
+  .validator(z.object({ wallets: z.array(z.string().regex(WALLET_RE)).max(100) }))
+  .handler(async ({ data }) => {
+    const { DB } = bindings();
+    if (!DB || data.wallets.length === 0) return { profiles: [] };
+    const wallets = [...new Set(data.wallets)];
+    const placeholders = wallets.map(() => "?").join(",");
+    const rows = await DB.prepare(`SELECT wallet,display_name,avatar_data_url,rating,wins,losses,draws FROM td_users WHERE wallet IN (${placeholders})`).bind(...wallets).all<{wallet:string;display_name:string|null;avatar_data_url:string|null;rating:number;wins:number;losses:number;draws:number}>();
+    return { profiles: (rows.results ?? []).map(row => ({wallet:row.wallet,displayName:row.display_name ?? "",avatarDataUrl:row.avatar_data_url ?? null,rating:row.rating ?? 1000,wins:row.wins ?? 0,losses:row.losses ?? 0,draws:row.draws ?? 0})) };
+  });
+
 /** Wallet profile API. Avatar data is resized client-side and bounded server-side. */
 export const getMyProfile = createServerFn({ method: "GET" })
   .validator(z.object({ token: z.string().min(24) }))
