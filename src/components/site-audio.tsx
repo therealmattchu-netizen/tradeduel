@@ -29,7 +29,7 @@ export function SiteAudio() {
   const sequenceTimerRef = useRef<number | null>(null);
   const sequenceIndexRef = useRef(0);
 
-  const scene: Scene = /\/match\/[^/]+/.test(pathname) ? "duel" : "lobby";
+  const scene: Scene = /\/(?:custom-)?match\/[^/]+/.test(pathname) ? "duel" : "lobby";
 
   useEffect(() => {
     const initial = readPrefs();
@@ -126,7 +126,7 @@ export function SiteAudio() {
     musicGainRef.current.gain.setTargetAtTime(prefsRef.current.music ? (scene === "duel" ? 0.22 : 0.15) : 0, ctx.currentTime, 0.8);
 
     const lobbyNotes = [261.63, 329.63, 392, 523.25, 392, 329.63, 293.66, 392, 440, 523.25, 440, 392];
-    const duelNotes = [110, 164.81, 146.83, 220, 130.81, 196, 123.47, 185, 110, 164.81, 207.65, 164.81];
+    const duelNotes = [82.41, 123.47, 110, 164.81, 92.5, 138.59, 98, 146.83, 82.41, 123.47, 116.54, 174.61];
     const step = () => {
       const current = audioRef.current;
       if (!current || current.state !== "running") {
@@ -174,23 +174,23 @@ export function SiteAudio() {
           osc.type = "sawtooth";
           osc.frequency.setValueAtTime(note, now);
           filter.type = "lowpass";
-          filter.frequency.value = 430;
+          filter.frequency.value = 620;
           gain.gain.setValueAtTime(0.0001, now);
-          gain.gain.exponentialRampToValueAtTime(0.105, now + 0.035);
+          gain.gain.exponentialRampToValueAtTime(0.13, now + 0.025);
           gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.48);
           osc.connect(filter);
           filter.connect(gain);
           gain.connect(musicGainRef.current!);
           osc.start(now);
           osc.stop(now + 0.5);
-          if (i % 2 === 0) {
+          if (i % 1 === 0) {
             const sub = current.createOscillator();
             const subGain = current.createGain();
             sub.type = "sine";
             sub.frequency.setValueAtTime(55, now);
             sub.frequency.exponentialRampToValueAtTime(43, now + 0.32);
             subGain.gain.setValueAtTime(0.0001, now);
-            subGain.gain.exponentialRampToValueAtTime(0.16, now + 0.025);
+            subGain.gain.exponentialRampToValueAtTime(0.19, now + 0.018);
             subGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.38);
             sub.connect(subGain);
             subGain.connect(musicGainRef.current!);
@@ -200,7 +200,7 @@ export function SiteAudio() {
         }
       }
       sequenceIndexRef.current += 1;
-      sequenceTimerRef.current = window.setTimeout(step, scene === "duel" ? 360 : 300);
+      sequenceTimerRef.current = window.setTimeout(step, scene === "duel" ? 255 : 300);
     };
     sequenceTimerRef.current = window.setTimeout(step, 100);
     return () => {
@@ -272,7 +272,7 @@ export function SiteAudio() {
 
   useEffect(() => {
     if (lastPathRef.current !== pathname) {
-      const enteringDuel = scene === "duel" && !/\/match\/[^/]+/.test(lastPathRef.current);
+      const enteringDuel = scene === "duel" && !/\/(?:custom-)?match\/[^/]+/.test(lastPathRef.current);
       lastPathRef.current = pathname;
       if (started) playNavigation(enteringDuel ? "duel" : "page");
     }
