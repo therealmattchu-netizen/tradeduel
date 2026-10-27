@@ -25,7 +25,7 @@ function CustomLiveMatch(){
    try { const a=await syncMatchActivity({data:{token,matchId}}); if(alive){setActivity(a);activityFailures=0;setError("");} }
    catch (activityError) { if(alive){activityFailures+=1;if(activityFailures>=3)setError("Solana data is delayed. Keeping the last confirmed snapshot while RPC retries in the background.");} }
   }catch(e){if(alive)setError(e instanceof Error?e.message:"Live match sync is temporarily unavailable.");}finally{busy=false;}};
-  void poll();const timer=window.setInterval(()=>void poll(),5000);const clock=window.setInterval(()=>setNow(Date.now()),1000);
+  void poll();const timer=window.setInterval(()=>void poll(),3000);const clock=window.setInterval(()=>setNow(Date.now()),1000);
   return()=>{alive=false;window.clearInterval(timer);window.clearInterval(clock)};
  },[matchId]);
  useEffect(()=>{let alive=true;const poll=async()=>{const token=window.sessionStorage.getItem("td_session_token")||"";if(!token)return;try{const r=await getCustomMatchChat({data:{token,matchId,channel,afterId:latestId}});if(!alive)return;const incoming=r.messages as Chat[];if(incoming.length){setChat(prev=>{const m=new Map(prev.map(x=>[x.id,x]));incoming.forEach(x=>m.set(x.id,x));return [...m.values()].sort((a,b)=>a.id-b.id)});setLatestId(Math.max(latestId,...incoming.map(x=>x.id)));}}catch{/* chat is only available to room members */}};void poll();const t=window.setInterval(()=>void poll(),3000);return()=>{alive=false;window.clearInterval(t)};},[matchId,channel,latestId]);

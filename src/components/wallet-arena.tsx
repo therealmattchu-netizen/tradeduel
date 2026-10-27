@@ -130,21 +130,26 @@ export function WalletArena({ authOnly = false }: { authOnly?: boolean } = {}) {
     let alive = true;
     void loadMatches(token);
     void loadRating(token);
-    // Restore the server-side queue state when a saved wallet session returns,
-    // including after a page refresh. The queue row may still be waiting/matched
-    // even though the component's local state has reset to idle.
-    void getQueueStatus({ data: { token } }).then((result) => {
+    // Retire the legacy practice queue for returning sessions. Existing matched
+    // records remain visible in history, but new matches should use public/private lobbies.
+    void getQueueStatus({ data: { token } }).then(async (result) => {
       if (!alive) return;
-      setQueueStatus(result.status);
-      if (result.status === "waiting") setNotice("You're still in the matchmaking queue.");
-      else if (result.status === "matched") setNotice("Opponent found. Competitive test match started; official ELO is not active yet.");
+      if (result.status === "waiting") {
+        try { await leaveMatchmakingQueue({ data: { token } }); } catch { /* best-effort cleanup of a retired queue entry */ }
+        if (!alive) return;
+        setQueueStatus("idle");
+        setNotice("The legacy queue has been retired. Use public or private match lobbies.");
+      } else {
+        setQueueStatus(result.status === "matched" ? "matched" : "idle");
+        if (result.status === "matched") setNotice("This is a legacy unranked match. Use public or private lobbies for current matches.");
+      }
     }).catch(() => { /* expired sessions are handled when the user takes an action */ });
     return () => { alive = false; };
   }, [token, loadMatches, loadRating]);
   useEffect(() => {
     if (!token || queueStatus !== "waiting") return;
     let alive = true;
-    const poll = async () => { try { const result = await getQueueStatus({ data: { token } }); if (!alive) return; const wasWaiting = queueStatus === "waiting"; setQueueStatus(result.status); if (result.status === "matched") { setNotice("Opponent found. Competitive test match started; official ELO is not active yet."); if (wasWaiting) announceMatchFound(); await loadMatches(token); } } catch { /* retry on next poll */ } };
+    const poll = async () => { try { const result = await getQueueStatus({ data: { token } }); if (!alive) return; const wasWaiting = queueStatus === "waiting"; setQueueStatus(result.status); if (result.status === "matched") { setNotice("Legacy queue match detected. This format is unranked; use public/private lobbies for current matches."); if (wasWaiting) announceMatchFound(); await loadMatches(token); } } catch { /* retry on next poll */ } };
     void poll(); const interval = window.setInterval(() => void poll(), 5000);
     return () => { alive = false; window.clearInterval(interval); };
   }, [token, queueStatus, loadMatches]);
@@ -326,9 +331,8 @@ export function WalletArena({ authOnly = false }: { authOnly?: boolean } = {}) {
         <small style={{ color: "#d8d2e5", fontSize: "12px", lineHeight: 1.55 }}>Only enter your private key inside the official wallet app or extension you chose. Never paste it into TradeDuel, a website form, or a chat. Verify the imported public address matches Pump.fun before connecting.</small>
       </div>
     </div>}
-    {!authOnly && wallet && <div className="td-queue-setup"><div className="td-config-field"><label htmlFor="td-game-mode">GAME MODE</label><select id="td-game-mode" value={gameMode} onChange={e=>setGameMode(e.target.value as typeof gameMode)} disabled={busy||queueStatus!=="idle"}><option value="standard">Standard</option><option value="one_position">One Position</option><option value="exposure_cap">Exposure Cap</option><option value="equal_start">Equal Start</option></select><small>{gameMode === "standard" ? "Standard head-to-head format. Trading performance and ELO are not scored in this format yet." : gameMode === "one_position" ? "One open position per player. This rule is not currently enforced." : gameMode === "exposure_cap" ? "The same maximum position exposure for both players. This rule is not currently enforced." : "Compare normalized returns from an equal starting allocation. This rule is not currently enforced."}</small></div><div className="td-config-field"><label htmlFor="td-duration">MATCH DURATION</label><select id="td-duration" value={duration} onChange={e=>setDuration(Number(e.target.value))} disabled={busy||queueStatus!=="idle"}><option value={900}>15 minutes</option><option value={1800}>30 minutes</option><option value={3600}>1 hour</option><option value={7200}>2 hours</option><option value={14400}>4 hours</option><option value={28800}>8 hours</option><option value={86400}>1 day</option></select><small>The timer begins when an opponent is paired. Verified trading results are not scored yet.</small></div></div>}
-    {!authOnly && wallet && <div className="td-queue-controls"><div><span className="td-mini-label">MATCHMAKING QUEUE</span><p>Queue pairing is available. Mode rules and verified trade scoring are not enabled yet.</p></div>{queueStatus === "waiting" ? <button className="td-secondary-action" onClick={leaveQueue} disabled={busy}>Leave queue</button> : <button className="td-primary-action" onClick={joinQueue} disabled={busy || queueStatus === "matched"}>{busy ? "Please wait…" : queueStatus === "matched" ? "Match found" : "Find an opponent"}</button>}</div>}
+    {!authOnly && wallet && <div className="td-legacy-queue-retired" role="status" style={{marginTop:"18px",padding:"16px",border:"1px solid rgba(167,139,250,0.28)",borderRadius:"12px"}}><strong>Legacy matchmaking queue retired</strong><p style={{margin:"8px 0 0",fontSize:"13px",color:"#c9c4d8"}}>Use the public match browser or create a private lobby to enter the current match flow.</p><Link className="td-match-open-link" to="/matchmaking">Open current matchmaking ↗</Link></div>}
     <p className="td-wallet-notice" role="status">{notice}</p>
-    {!authOnly && matches.length > 0 && <div className="td-my-matches"><span className="td-mini-label">YOUR MATCH HISTORY</span>{matches.map((match) => <div className="td-my-match" key={match.id}><span><strong>{shortWallet(match.player_one)}</strong> <em>vs</em> <strong>{match.player_two ? shortWallet(match.player_two) : "Waiting for opponent"}</strong></span><span className="td-status-pill">{match.status.toUpperCase()}</span><small>{match.verification_status === "verified" ? "Verified" : "Unverified match · ELO not active"}</small><Link className="td-match-open-link" to="/match/$matchId" params={{matchId:match.id}}>Open match ↗</Link></div>)}</div>}
+    {!authOnly && matches.length > 0 && <div className="td-my-matches"><span className="td-mini-label">YOUR MATCH HISTORY</span>{matches.map((match) => <div className="td-my-match" key={match.id}><span><strong>{shortWallet(match.player_one)}</strong> <em>vs</em> <strong>{match.player_two ? shortWallet(match.player_two) : "Waiting for opponent"}</strong></span><span className="td-status-pill">{match.status.toUpperCase()}</span><small>{match.verification_status === "verified" ? "Verified" : "Legacy match · unranked"}</small><Link className="td-match-open-link" to="/match/$matchId" params={{matchId:match.id}}>Open match ↗</Link></div>)}</div>}
   </div>;
 }
