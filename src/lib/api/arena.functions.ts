@@ -251,7 +251,7 @@ const PUBLIC_SOLANA_MAINNET_RPCS = [
 
 function solanaRpcEndpoints(): string[] {
   const configured = (bindings().SOLANA_RPC_URLS ?? bindings().SOLANA_RPC_URL ?? "")
-    .split(/[\\s,;]+/).map(value => value.trim()).filter(Boolean);
+    .split(/[\s,;]+/).map(value => value.trim()).filter(Boolean);
   const primary = [...new Set(configured)];
   const fallbacks = [...new Set(PUBLIC_SOLANA_MAINNET_RPCS.filter(url => !primary.includes(url)))];
   // Keep configured provider URLs first on every request. Only rotate public fallbacks.
