@@ -82,3 +82,5 @@ jobs:
 # Trigger deployment for match-eligible live PnL scoring.
 
 # Trigger production deployment for surrender-forfeit ELO handling.
+
+# Trigger production deployment after fixing surrender settlement syntax.
