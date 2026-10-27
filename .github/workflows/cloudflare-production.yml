@@ -1,6 +1,9 @@
 name: Deploy TradeDuel production to Cloudflare
 
 on:
+  push:
+    branches:
+      - migration/cloudflare-audit
   workflow_dispatch:
     inputs:
       confirm_production:
@@ -17,7 +20,7 @@ concurrency:
 
 jobs:
   deploy-production:
-    if: github.ref == 'refs/heads/migration/cloudflare-audit' && inputs.confirm_production == 'DEPLOY'
+    if: github.ref == 'refs/heads/migration/cloudflare-audit' && (inputs.confirm_production == 'DEPLOY' || contains(github.event.head_commit.message, '[deploy-production]'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: cloudflare-production
