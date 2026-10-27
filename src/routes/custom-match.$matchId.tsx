@@ -38,7 +38,7 @@ function CustomLiveMatch(){
   return (latest?.tokenBalances??[]).filter(t=>t.amount>0).map(t=>{
    const old=previous?.tokenBalances?.find(p=>p.mint===t.mint&&typeof p.priceUsd==="number"&&p.priceUsd>0);
    const price=typeof t.priceUsd==="number"&&t.priceUsd>0?t.priceUsd:null;
-   return {wallet:member.wallet,mint:t.mint,amount:t.amount,priceUsd:price,valueUsd:typeof t.valueUsd==="number"?t.valueUsd:null,priceChangePct:old&&price!==null?(price/old.priceUsd!-1)*100:null};
+   return {wallet:member.wallet,mint:t.mint,amount:t.amount,name:t.name??null,symbol:t.symbol??null,marketCapUsd:typeof t.marketCapUsd==="number"?t.marketCapUsd:null,priceUsd:price,valueUsd:typeof t.valueUsd==="number"?t.valueUsd:null,priceChangePct:old&&price!==null?(price/old.priceUsd!-1)*100:null};
   });
  }),[members,observations]);
  const fillCandidates=((activity?.fillCandidates??[]) as FillCandidate[]);
