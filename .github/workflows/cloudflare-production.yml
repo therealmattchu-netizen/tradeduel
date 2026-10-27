@@ -102,3 +102,4 @@ jobs:
 
 # [deploy-production] Ship prominent saved ELO completion popup and history display.
 # [deploy-production] Fix nullable opponent profile access and rebuild ELO history release.
+# [deploy-production] Keep fully sold match positions visible with buy-in and sell proceeds accounting.
