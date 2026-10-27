@@ -1829,3 +1829,56 @@ export const getMyTradingWallet = createServerFn({ method: "POST" })
     const row = await DB.prepare("SELECT trading_wallet,verified_at FROM td_trading_wallets WHERE owner_wallet=?").bind(ownerWallet).first<{trading_wallet:string;verified_at:string}>();
     return { ownerWallet, tradingWallet:row?.trading_wallet??null, verifiedAt:row?.verified_at??null };
   });
+
+
+/** Refresh live balances/spot quotes independently of the slower transaction-history indexer. */
+export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    let participants: string[] = [];
+    const custom = await DB.prepare("SELECT id,status FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string}>();
+    if (custom) {
+      const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
+      if (!member) throw new Error("You must be a match member to refresh this portfolio.");
+      const rows = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string}>();
+      participants = [...new Set((rows.results??[]).map(row=>row.wallet))];
+    } else {
+      const match = await DB.prepare("SELECT player_one,player_two FROM td_matches WHERE id=? AND (player_one=? OR player_two=?)").bind(data.matchId,wallet,wallet).first<{player_one:string;player_two:string|null}>();
+      if (!match) throw new Error("Match not found for this wallet.");
+      participants = [...new Set([match.player_one,match.player_two].filter((v):v is string=>Boolean(v)))];
+    }
+    const nowSec=Math.floor(Date.now()/1000);
+    const wrappedSol="So11111111111111111111111111111111111111112";
+    const errors:string[]=[];
+    for (const trackedWallet of participants) {
+      try {
+        const previous=await DB.prepare("SELECT observed_at FROM td_match_valuation_observations WHERE match_id=? AND wallet=? ORDER BY observed_at DESC LIMIT 1").bind(data.matchId,trackedWallet).first<{observed_at:number}>();
+        if(previous && nowSec-previous.observed_at<5) continue;
+        const [balance,classic,token2022]=await Promise.all([
+          solanaRpcCall("getBalance",[trackedWallet,{commitment:"confirmed"}]) as Promise<{value:number}>,
+          solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenkegQfeZyiNwAJbKPFXCWuBvf9Ss623VQ5DA"},{encoding:"jsonParsed",commitment:"confirmed"}]) as Promise<ParsedTokenAccounts>,
+          solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBfD9W4y7X"} ,{encoding:"jsonParsed",commitment:"confirmed"}]) as Promise<ParsedTokenAccounts>,
+        ]);
+        const tokenBalances=[...classic.value,...token2022.value].map((entry:any)=>({mint:entry.account.data.parsed.info.mint,amount:Number(entry.account.data.parsed.info.tokenAmount.uiAmountString??entry.account.data.parsed.info.tokenAmount.uiAmount??0)})).filter(t=>Number.isFinite(t.amount)&&t.amount>0);
+        const mints=[...new Set([wrappedSol,...tokenBalances.map(t=>t.mint)])].slice(0,30);
+        type Pair={baseToken?:{address?:string;name?:string;symbol?:string};priceUsd?:string;liquidity?:{usd?:number};marketCap?:number;fdv?:number;url?:string};
+        let pairs:Pair[]=[];
+        try { const response=await fetch("https://api.dexscreener.com/tokens/v1/solana/"+mints.join(","),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)}); if(response.ok)pairs=await response.json() as Pair[]; } catch {}
+        const prices=new Map<string,number>(),liquidity=new Map<string,number>(),caps=new Map<string,number>(),names=new Map<string,{name:string|null;symbol:string|null;pairUrl:string|null}>();
+        for(const pair of pairs){const mint=pair.baseToken?.address,price=Number(pair.priceUsd),liq=Number(pair.liquidity?.usd??0);if(mint&&price>0&&Number.isFinite(price)&&liq>=25&&liq>(liquidity.get(mint)??0)){prices.set(mint,price);liquidity.set(mint,liq);const cap=Number(pair.marketCap??pair.fdv??0);if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);names.set(mint,{name:pair.baseToken?.name??null,symbol:pair.baseToken?.symbol??null,pairUrl:pair.url??null});}}
+        const missing=tokenBalances.map(t=>t.mint).filter(mint=>!prices.has(mint)).slice(0,5);
+        await Promise.all(missing.map(async mint=>{try{const response=await fetch("https://frontend-api-v3.pump.fun/coins-v2/"+encodeURIComponent(mint),{headers:{accept:"application/json"},signal:AbortSignal.timeout(1800)});if(!response.ok)return;const coin=await response.json() as {name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;price_usd?:number|string};const cap=Number(coin.usd_market_cap??coin.market_cap_usd);if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);if(!names.has(mint)&&(coin.name||coin.symbol))names.set(mint,{name:coin.name??null,symbol:coin.symbol??null,pairUrl:"https://pump.fun/coin/"+mint});const direct=Number(coin.price_usd);if(direct>0&&Number.isFinite(direct))prices.set(mint,direct);else if(cap>0&&Number.isFinite(cap))prices.set(mint,cap/1_000_000_000);}catch{}}));
+        if(!prices.has(wrappedSol)){try{const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+wrappedSol,{headers:{accept:"application/json"},signal:AbortSignal.timeout(1800)});if(response.ok){const body=await response.json() as {pairs?:Pair[]};const best=(body.pairs??[]).filter(p=>p.baseToken?.address===wrappedSol&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];if(best)prices.set(wrappedSol,Number(best.priceUsd));}}catch{}}
+        const tokenValues=tokenBalances.map(t=>({...t,...(names.get(t.mint)??{}),priceUsd:prices.get(t.mint)??null,marketCapUsd:caps.get(t.mint)??null,liquidityUsd:liquidity.get(t.mint)??null,valueUsd:prices.has(t.mint)?t.amount*prices.get(t.mint)!:null}));
+        const solPrice=prices.get(wrappedSol),unpriced=tokenValues.filter(t=>t.valueUsd===null).length;
+        const complete=solPrice!==undefined&&unpriced===0&&tokenBalances.length<=29;
+        const portfolioUsd=(solPrice!==undefined?balance.value/1e9*solPrice:0)+tokenValues.reduce((sum,t)=>sum+(t.valueUsd??0),0);
+        const note=complete?"Live balance snapshot with current spot quotes; display estimate only, not settlement evidence.":"Partial live estimate: one or more assets lack a qualifying quote. Unpriced assets are excluded; not settlement evidence.";
+        await DB.prepare("INSERT OR IGNORE INTO td_match_valuation_observations (match_id,wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?)")
+          .bind(data.matchId,trackedWallet,nowSec,balance.value/1e9,prices.size?portfolioUsd:null,JSON.stringify(tokenValues),tokenValues.length-unpriced,unpriced,complete?1:0,note).run();
+      } catch(error) { errors.push(trackedWallet.slice(0,5)+": "+(error instanceof Error?error.message:"refresh failed")); }
+    }
+    const rows=await DB.prepare("SELECT wallet,observed_at,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note FROM td_match_valuation_observations WHERE match_id=? ORDER BY observed_at DESC LIMIT 500").bind(data.matchId).all<{wallet:string;observed_at:number;portfolio_usd:number|null;token_balances_json:string;priced_mints:number;unpriced_mints:number;complete:number;integrity_note:string}>();
+    return {matchId:data.matchId,updatedAt:new Date().toISOString(),errors,valuationObservations:(rows.results??[]).map(row=>({...row,complete:Boolean(row.complete),tokenBalances:JSON.parse(row.token_balances_json||"[]")}))};
+  });
