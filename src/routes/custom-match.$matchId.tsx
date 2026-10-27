@@ -46,7 +46,9 @@ function CustomLiveMatch(){
   const startSec=room?.startedAt?Math.floor(new Date(room.startedAt).getTime()/1000):null;
   const endSec=room?.endsAt?Math.floor(new Date(room.endsAt).getTime()/1000):null;
   const playerObservations=observations.filter(o=>o.wallet===m.wallet&&Array.isArray(o.tokenBalances)).sort((a,b)=>a.observed_at-b.observed_at);
-  const latestObservation=playerObservations.filter(o=>(startSec===null||o.observed_at>=startSec)&&(endSec===null||o.observed_at<=endSec)).at(-1);
+  const eligibleObservations=playerObservations.filter(o=>(startSec===null||o.observed_at>=startSec)&&(endSec===null||o.observed_at<=endSec));
+  // Keep the last known portfolio mark visible when a quote provider misses one poll.
+  const latestObservation=eligibleObservations.filter(o=>typeof o.portfolio_usd==="number").at(-1) ?? eligibleObservations.at(-1);
   const latestTokens=latestObservation?.tokenBalances??[];
   const solMint="So11111111111111111111111111111111111111112";
   const solPrice=latestTokens.find(t=>t.mint===solMint)?.priceUsd??null;
@@ -108,7 +110,8 @@ function CustomLiveMatch(){
   // Partial portfolio values remain visible above, but are never used for a precise %.
   const startValuation=(activity?.valuations??[]).find((row:any)=>row.wallet===m.wallet&&row.phase==="start"&&row.complete&&row.portfolio_usd!==null&&startSec!==null&&Math.abs(row.observed_at-startSec)<=120);
   const latestCompleteObservation=playerObservations.filter(o=>o.complete&&o.portfolio_usd!==null&&(startSec===null||o.observed_at>=startSec)&&(endSec===null||o.observed_at<=endSec)).at(-1);
-  const currentPortfolioFresh=latestCompleteObservation!==undefined&&Math.floor(Date.now()/1000)-latestCompleteObservation.observed_at<=30;
+  // A transient incomplete quote batch should not flash Pending every few seconds.
+  const currentPortfolioFresh=latestCompleteObservation!==undefined&&Math.floor(Date.now()/1000)-latestCompleteObservation.observed_at<=90;
   const baselinePortfolio=typeof startValuation?.portfolio_usd==="number"&&startValuation.portfolio_usd>0?startValuation.portfolio_usd:null;
   const currentPortfolio= currentPortfolioFresh ? latestCompleteObservation?.portfolio_usd ?? null : null;
   const pct=baselinePortfolio!==null&&currentPortfolio!==null?((currentPortfolio-baselinePortfolio)/baselinePortfolio)*100:null;
@@ -126,11 +129,23 @@ function CustomLiveMatch(){
  const remaining=room?.endsAt?Math.max(0,Math.ceil((new Date(room.endsAt).getTime()-now)/1000)):room?.startedAt&&room?.durationSeconds?Math.max(0,Math.ceil((new Date(room.startedAt).getTime()+room.durationSeconds*1000-now)/1000)):0;
  const tokenPositions=useMemo(()=>members.flatMap(member=>{
   const samples=observations.filter(o=>o.wallet===member.wallet&&Array.isArray(o.tokenBalances)).sort((a,b)=>a.observed_at-b.observed_at);
-  const latest=samples[samples.length-1]; const previous=samples[samples.length-2];
+  const latest=samples[samples.length-1];
+  // Merge the latest balances with the last valid quote for each mint. A temporary
+  // provider miss must not blank token prices, position values, or market caps.
+  const quoteByMint=new Map<string,TokenHolding>();
+  for(const sample of samples.filter(o=>Math.floor(Date.now()/1000)-o.observed_at<=180)) for(const token of sample.tokenBalances??[]) {
+    const previous=quoteByMint.get(token.mint);
+    if(typeof token.priceUsd==="number"&&token.priceUsd>0) quoteByMint.set(token.mint,{...previous,...token});
+    else if(previous) quoteByMint.set(token.mint,{...token,priceUsd:previous.priceUsd,marketCapUsd:token.marketCapUsd??previous.marketCapUsd,name:token.name??previous.name,symbol:token.symbol??previous.symbol,pairUrl:token.pairUrl??previous.pairUrl});
+    else quoteByMint.set(token.mint,{...token});
+  }
   return (latest?.tokenBalances??[]).filter(t=>t.amount>0).map(t=>{
-   const old=previous?.tokenBalances?.find(p=>p.mint===t.mint&&typeof p.priceUsd==="number"&&p.priceUsd>0);
-   const price=typeof t.priceUsd==="number"&&t.priceUsd>0?t.priceUsd:null;
-   return {wallet:member.wallet,mint:t.mint,amount:t.amount,name:t.name??null,symbol:t.symbol??null,pairUrl:t.pairUrl??("https://pump.fun/coin/"+t.mint),marketCapUsd:typeof t.marketCapUsd==="number"?t.marketCapUsd:null,priceUsd:price,valueUsd:typeof t.valueUsd==="number"?t.valueUsd:null,priceChangePct:old&&price!==null?(price/old.priceUsd!-1)*100:null};
+   const quote=quoteByMint.get(t.mint);
+   const price=typeof t.priceUsd==="number"&&t.priceUsd>0?t.priceUsd:typeof quote?.priceUsd==="number"&&quote.priceUsd>0?quote.priceUsd:null;
+   const priorQuotes=samples.flatMap(o=>o.tokenBalances??[]).filter(p=>p.mint===t.mint&&typeof p.priceUsd==="number"&&p.priceUsd>0);
+   const old=priorQuotes.length>1?priorQuotes[priorQuotes.length-2]:undefined;
+   const marketCap=typeof t.marketCapUsd==="number"&&t.marketCapUsd>0?t.marketCapUsd:quote?.marketCapUsd??null;
+   return {wallet:member.wallet,mint:t.mint,amount:t.amount,name:t.name??quote?.name??null,symbol:t.symbol??quote?.symbol??null,pairUrl:t.pairUrl??quote?.pairUrl??("https://pump.fun/coin/"+t.mint),marketCapUsd:marketCap,priceUsd:price,valueUsd:price!==null?t.amount*price:typeof t.valueUsd==="number"?t.valueUsd:null,priceChangePct:old&&price!==null?(price/old.priceUsd!-1)*100:null};
   });
  }),[members,observations]);
 
