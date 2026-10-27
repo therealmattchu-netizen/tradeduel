@@ -127,7 +127,7 @@ export const verifyWalletChallenge = createServerFn({ method: "POST" }).validato
 export const getMyRating = createServerFn({ method: "POST" }).validator(z.object({ token: z.string().min(24) })).handler(async ({ data }) => {
   const { DB, wallet } = await requireSession(data.token);
   const row = await DB.prepare("SELECT rating, wins, losses, draws FROM td_users WHERE wallet = ?").bind(wallet).first<{ rating: number; wins: number; losses: number; draws: number }>();
-  return { wallet, rating: row?.rating ?? 1000, wins: row?.wins ?? 0, losses: row?.losses ?? 0, draws: row?.draws ?? 0, eloActive: false };
+  return { wallet, rating: row?.rating ?? 1000, wins: row?.wins ?? 0, losses: row?.losses ?? 0, draws: row?.draws ?? 0, eloActive: true };
 });
 
 export const getLeaderboard = createServerFn({ method: "GET" }).handler(async () => {
