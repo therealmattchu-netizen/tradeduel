@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { TradingWalletLink } from "@/components/trading-wallet-link";
 import { createWalletChallenge, getMyMatches, getMyRating, getQueueStatus, joinMatchmakingQueue, leaveMatchmakingQueue, verifyWalletChallenge } from "@/lib/api/arena.functions";
 
 type StandardWallet = {
