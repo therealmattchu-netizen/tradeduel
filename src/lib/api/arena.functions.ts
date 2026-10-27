@@ -268,39 +268,38 @@ function solanaRpcEndpoints(): string[] {
 /** RPC failover: try configured providers first, then independent public fallbacks.
  * A provider returning an RPC error or HTTP throttle is never treated as valid data. */
 async function solanaRpcCall(method: string, params: unknown[]) {
+  // Keep interactive requests bounded. The former nested retry across every public
+  // fallback could occupy a request for minutes when providers stalled, freezing the
+  // entire match response (including prices). Try a small number of independent hosts
+  // once each; the next client poll naturally retries with fresh provider rotation.
   const failures: string[] = [];
-  const endpoints = solanaRpcEndpoints();
+  const endpoints = solanaRpcEndpoints().slice(0, 4);
   for (const endpoint of endpoints) {
     let lastFailure = "request failed";
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-          signal: AbortSignal.timeout(4500),
-        });
-        if (response.status === 429 || response.status >= 500) {
-          lastFailure = `HTTP ${response.status}`;
-          if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1))); continue; }
-          break;
-        }
-        if (!response.ok) { lastFailure = `HTTP ${response.status}`; break; }
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(2200),
+      });
+      if (response.status === 429 || response.status >= 500) lastFailure = `HTTP ${response.status}`;
+      else if (!response.ok) lastFailure = `HTTP ${response.status}`;
+      else {
         const json = await response.json() as { result?: unknown; error?: { code?: number; message?: string } };
-        if (json.error) { lastFailure = json.error.message || "RPC error"; break; }
-        if (!("result" in json)) { lastFailure = "missing result"; break; }
-        return json.result;
-      } catch (error) {
-        lastFailure = error instanceof Error ? error.message : "request failed";
-        if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, 150)); continue; }
+        if (json.error) lastFailure = json.error.message || "RPC error";
+        else if (!("result" in json)) lastFailure = "missing result";
+        else return json.result;
       }
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : "request failed";
     }
     let host = "invalid-endpoint";
     try { host = new URL(endpoint).hostname; } catch {}
     failures.push(`${host}: ${lastFailure}`);
   }
-  console.error("Solana mainnet RPC providers failed", { method, providerCount: endpoints.length, failures });
-  throw new Error("Solana mainnet RPC is temporarily unavailable across all configured providers. Configure a dedicated Solana RPC URL for production and retry.");
+  console.error("Solana mainnet RPC providers failed within live-request budget", { method, providerCount: endpoints.length, failures });
+  throw new Error("Solana RPC did not respond in time. The live portfolio will retry automatically; configure a healthy dedicated RPC endpoint for production.");
 }
 
 /** Lightweight, read-only portfolio estimate for wallet-value matchmaking.
@@ -1781,4 +1780,130 @@ export const updateMyProfile = createServerFn({ method: "POST" })
     const row = await DB.prepare("SELECT wallet,display_name,avatar_data_url FROM td_users WHERE wallet=?")
       .bind(wallet).first<{wallet:string;display_name:string|null;avatar_data_url:string|null}>();
     return { wallet, displayName: row?.display_name ?? "", avatarDataUrl: row?.avatar_data_url ?? null, message: "Profile saved." };
+  });
+
+
+/** Create a short-lived challenge for a separate trading address. The connected wallet remains the account identity. */
+export const createTradingWalletChallenge = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), tradingWallet: z.string().regex(WALLET_RE) }))
+  .handler(async ({ data }) => {
+    const { DB, wallet: ownerWallet } = await requireSession(data.token);
+    if (data.tradingWallet === ownerWallet) throw new Error("Your connected wallet is already your trading wallet.");
+    const alreadyUsed = await DB.prepare("SELECT owner_wallet FROM td_trading_wallets WHERE trading_wallet = ?").bind(data.tradingWallet).first<{owner_wallet:string}>();
+    if (alreadyUsed && alreadyUsed.owner_wallet !== ownerWallet) throw new Error("This trading wallet is already linked to another TradeDuel account.");
+    const nonce = crypto.randomUUID();
+    const domain = bindings().TRADEDUEL_WALLET_DOMAIN?.trim().toLowerCase();
+    if (!domain || !/^(?=.{1,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)) throw new Error("Wallet verification is not configured for this deployment.");
+    const expiresAt = Math.floor(Date.now()/1000)+300;
+    const message = `TradeDuel trading wallet verification\nDomain: ${domain}\nAccount wallet: ${ownerWallet}\nTrading wallet: ${data.tradingWallet}\nNonce: ${nonce}\nIssued At: ${new Date().toISOString()}\nExpiration Time: ${new Date(expiresAt*1000).toISOString()}\n\nThis signature links this public trading address to your TradeDuel account. It does not authorize transactions or transfer funds.`;
+    await DB.prepare("INSERT INTO td_trading_wallet_challenges (nonce, owner_wallet, trading_wallet, message, expires_at) VALUES (?,?,?,?,?)").bind(nonce,ownerWallet,data.tradingWallet,message,expiresAt).run();
+    return { nonce, message, expiresAt };
+  });
+
+/** Verify the signature made by the trading wallet itself; never accept a pasted address as proof. */
+export const verifyTradingWallet = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), tradingWallet: z.string().regex(WALLET_RE), nonce: z.string().uuid(), signature: z.string().min(80).max(200) }))
+  .handler(async ({ data }) => {
+    const { DB, wallet: ownerWallet } = await requireSession(data.token);
+    const challenge = await DB.prepare("SELECT message,expires_at,used FROM td_trading_wallet_challenges WHERE nonce=? AND owner_wallet=? AND trading_wallet=?").bind(data.nonce,ownerWallet,data.tradingWallet).first<{message:string;expires_at:number;used:number}>();
+    if (!challenge || challenge.used || challenge.expires_at < Math.floor(Date.now()/1000)) throw new Error("Trading-wallet verification expired. Please try again.");
+    let valid = false;
+    try {
+      const publicKey = base58Decode(data.tradingWallet), signature = base64ToBytes(data.signature);
+      if (publicKey.length !== 32 || signature.length !== 64) throw new Error("Invalid key or signature length");
+      valid = await crypto.subtle.verify({name:"Ed25519"}, await crypto.subtle.importKey("raw",new Uint8Array(publicKey).buffer as ArrayBuffer,{name:"Ed25519"},false,["verify"]),new Uint8Array(signature).buffer as ArrayBuffer,new TextEncoder().encode(challenge.message).buffer as ArrayBuffer);
+    } catch { valid = false; }
+    if (!valid) throw new Error("The signature does not prove control of that trading wallet. Connect the wallet that matches the pasted address and sign again.");
+    const consumed = await DB.prepare("UPDATE td_trading_wallet_challenges SET used=1 WHERE nonce=? AND owner_wallet=? AND used=0 AND expires_at>=?").bind(data.nonce,ownerWallet,Math.floor(Date.now()/1000)).run();
+    if ((consumed.meta?.changes ?? 0)!==1) throw new Error("This verification challenge was already used or expired.");
+    const conflict = await DB.prepare("SELECT owner_wallet FROM td_trading_wallets WHERE trading_wallet=?").bind(data.tradingWallet).first<{owner_wallet:string}>();
+    if (conflict && conflict.owner_wallet!==ownerWallet) throw new Error("This trading wallet is already linked to another TradeDuel account.");
+    await DB.prepare("INSERT INTO td_trading_wallets (owner_wallet,trading_wallet,verified_at,updated_at) VALUES (?,?,datetime('now'),datetime('now')) ON CONFLICT(owner_wallet) DO UPDATE SET trading_wallet=excluded.trading_wallet,verified_at=datetime('now'),updated_at=datetime('now')").bind(ownerWallet,data.tradingWallet).run();
+    return { verified:true, ownerWallet, tradingWallet:data.tradingWallet, message:"Trading wallet ownership verified." };
+  });
+
+export const getMyTradingWallet = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24) }))
+  .handler(async ({ data }) => {
+    const { DB, wallet: ownerWallet } = await requireSession(data.token);
+    const row = await DB.prepare("SELECT trading_wallet,verified_at FROM td_trading_wallets WHERE owner_wallet=?").bind(ownerWallet).first<{trading_wallet:string;verified_at:string}>();
+    return { ownerWallet, tradingWallet:row?.trading_wallet??null, verifiedAt:row?.verified_at??null };
+  });
+
+
+/** Refresh live balances/spot quotes independently of the slower transaction-history indexer. */
+export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
+  .validator(z.object({ token: z.string().min(24), matchId: z.string().uuid() }))
+  .handler(async ({ data }) => {
+    const { DB, wallet } = await requireSession(data.token);
+    let participants: string[] = [];
+    const custom = await DB.prepare("SELECT id,status FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{id:string;status:string}>();
+    if (custom) {
+      const member = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
+      if (!member) throw new Error("You must be a match member to refresh this portfolio.");
+      const rows = await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? ORDER BY team_number,id").bind(data.matchId).all<{wallet:string}>();
+      participants = [...new Set((rows.results??[]).map(row=>row.wallet))];
+    } else {
+      const match = await DB.prepare("SELECT player_one,player_two FROM td_matches WHERE id=? AND (player_one=? OR player_two=?)").bind(data.matchId,wallet,wallet).first<{player_one:string;player_two:string|null}>();
+      if (!match) throw new Error("Match not found for this wallet.");
+      participants = [...new Set([match.player_one,match.player_two].filter((v):v is string=>Boolean(v)))];
+    }
+    const nowSec=Math.floor(Date.now()/1000);
+    const wrappedSol="So11111111111111111111111111111111111111112";
+    const errors:string[]=[];
+    for (const ownerWallet of participants) {
+      let linked: {trading_wallet:string} | null = null;
+      try { linked = await DB.prepare("SELECT trading_wallet FROM td_trading_wallets WHERE owner_wallet=?").bind(ownerWallet).first<{trading_wallet:string}>(); } catch { /* Older deployments can still refresh the connected wallet until the migration is applied. */ }
+      const trackedWallet = linked?.trading_wallet ?? ownerWallet;
+      try {
+        const previous=await DB.prepare("SELECT observed_at FROM td_match_valuation_observations WHERE match_id=? AND wallet=? ORDER BY observed_at DESC LIMIT 1").bind(data.matchId,ownerWallet).first<{observed_at:number}>();
+        if(previous && nowSec-previous.observed_at<5) continue;
+        const [balance,classic,token2022]=await Promise.all([
+          solanaRpcCall("getBalance",[trackedWallet,{commitment:"confirmed"}]) as Promise<{value:number}>,
+          (solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},{encoding:"jsonParsed",commitment:"confirmed"}]).catch(()=>({value:[],__failed:true} as any)) as Promise<ParsedTokenAccounts & {__failed?:boolean}>),
+          (solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"},{encoding:"jsonParsed",commitment:"confirmed"}]).catch(()=>({value:[],__failed:true} as any)) as Promise<ParsedTokenAccounts & {__failed?:boolean}>),
+        ]);
+        const tokenAccountsComplete=!classic.__failed&&!token2022.__failed;
+        const tokenBalances=[...classic.value,...token2022.value].map((entry:any)=>({mint:entry.account.data.parsed.info.mint,amount:Number(entry.account.data.parsed.info.tokenAmount.uiAmountString??entry.account.data.parsed.info.tokenAmount.uiAmount??0)})).filter(t=>Number.isFinite(t.amount)&&t.amount>0);
+        const mints=[...new Set([wrappedSol,...tokenBalances.map(t=>t.mint)])].slice(0,30);
+        type Pair={baseToken?:{address?:string;name?:string;symbol?:string};priceUsd?:string;liquidity?:{usd?:number};marketCap?:number;fdv?:number;url?:string};
+        let pairs:Pair[]=[];
+        try { const response=await fetch("https://api.dexscreener.com/tokens/v1/solana/"+mints.join(","),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)}); if(response.ok)pairs=await response.json() as Pair[]; } catch {}
+        const prices=new Map<string,number>(),liquidity=new Map<string,number>(),caps=new Map<string,number>(),names=new Map<string,{name:string|null;symbol:string|null;pairUrl:string|null}>();
+        for(const pair of pairs){const mint=pair.baseToken?.address,price=Number(pair.priceUsd),liq=Number(pair.liquidity?.usd??0);if(mint&&price>0&&Number.isFinite(price)&&liq>=25&&liq>(liquidity.get(mint)??0)){prices.set(mint,price);liquidity.set(mint,liq);const cap=Number(pair.marketCap??pair.fdv??0);if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);names.set(mint,{name:pair.baseToken?.name??null,symbol:pair.baseToken?.symbol??null,pairUrl:pair.url??null});}}
+        const missing=tokenBalances.map(t=>t.mint).filter(mint=>!prices.has(mint)).slice(0,8);
+        type PumpCoin={name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string};
+        await Promise.all(missing.map(async mint=>{try{
+          let coin:PumpCoin|undefined;
+          for(const endpoint of ["https://frontend-api-v3.pump.fun/coins-v2/"+encodeURIComponent(mint),"https://frontend-api-v3.pump.fun/coins/"+encodeURIComponent(mint)+"?sync=true"]){
+            try{const response=await fetch(endpoint,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});if(response.ok){coin=await response.json() as PumpCoin;break;}}catch{}
+          }
+          if(!coin)return;
+          const cap=Number(coin.usd_market_cap??coin.market_cap_usd??coin.market_cap);
+          if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);
+          if(!names.has(mint)&&(coin.name||coin.symbol))names.set(mint,{name:coin.name??null,symbol:coin.symbol??null,pairUrl:"https://pump.fun/coin/"+mint});
+          const direct=Number(coin.price_usd);
+          if(direct>0&&Number.isFinite(direct))prices.set(mint,direct);
+          else if(cap>0&&Number.isFinite(cap))prices.set(mint,cap/1_000_000_000);
+        }catch{}}));
+        if(!prices.has(wrappedSol)){try{
+          const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+wrappedSol,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});
+          if(response.ok){const body=await response.json() as {pairs?:Array<Pair&{quoteToken?:{address?:string};priceNative?:string}>};
+            const liquid=(body.pairs??[]).filter(p=>Number(p.liquidity?.usd??0)>=100);
+            const direct=liquid.filter(p=>p.baseToken?.address===wrappedSol&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];
+            if(direct)prices.set(wrappedSol,Number(direct.priceUsd));
+            else {const inverse=liquid.filter(p=>p.quoteToken?.address===wrappedSol&&Number(p.priceUsd)>0&&Number(p.priceNative)>0).map(p=>({price:Number(p.priceUsd)/Number(p.priceNative),liquidity:Number(p.liquidity?.usd??0)})).filter(p=>Number.isFinite(p.price)&&p.price>0).sort((a,b)=>b.liquidity-a.liquidity)[0];if(inverse)prices.set(wrappedSol,inverse.price);}
+          }
+        }catch{}}
+        const tokenValues=tokenBalances.map(t=>({...t,...(names.get(t.mint)??{}),priceUsd:prices.get(t.mint)??null,marketCapUsd:caps.get(t.mint)??null,liquidityUsd:liquidity.get(t.mint)??null,valueUsd:prices.has(t.mint)?t.amount*prices.get(t.mint)!:null}));
+        const solPrice=prices.get(wrappedSol),unpriced=tokenValues.filter(t=>t.valueUsd===null).length;
+        const complete=tokenAccountsComplete&&solPrice!==undefined&&unpriced===0&&tokenBalances.length<=29;
+        const portfolioUsd=(solPrice!==undefined?balance.value/1e9*solPrice:0)+tokenValues.reduce((sum,t)=>sum+(t.valueUsd??0),0);
+        const note=complete?"Live balance snapshot with current spot quotes; display estimate only, not settlement evidence.":(!tokenAccountsComplete?"Partial live estimate: at least one SPL token-account query failed, so balances may be incomplete. Not settlement evidence.":"Partial live estimate: one or more assets lack a qualifying quote. Unpriced assets are excluded; not settlement evidence.");
+        await DB.prepare("INSERT OR IGNORE INTO td_match_valuation_observations (match_id,wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?)")
+          .bind(data.matchId,ownerWallet,nowSec,balance.value/1e9,prices.size?portfolioUsd:null,JSON.stringify(tokenValues),tokenValues.length-unpriced,unpriced,complete?1:0,note).run();
+      } catch(error) { errors.push(ownerWallet.slice(0,5)+": "+(error instanceof Error?error.message:"refresh failed")); }
+    }
+    const rows=await DB.prepare("SELECT wallet,observed_at,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note FROM td_match_valuation_observations WHERE match_id=? ORDER BY observed_at DESC LIMIT 500").bind(data.matchId).all<{wallet:string;observed_at:number;portfolio_usd:number|null;token_balances_json:string;priced_mints:number;unpriced_mints:number;complete:number;integrity_note:string}>();
+    return {matchId:data.matchId,updatedAt:new Date().toISOString(),errors,valuationObservations:(rows.results??[]).map(row=>({...row,complete:Boolean(row.complete),tokenBalances:JSON.parse(row.token_balances_json||"[]")}))};
   });

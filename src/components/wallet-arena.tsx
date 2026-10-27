@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
+import { TradingWalletLink } from "@/components/trading-wallet-link";
 import { createWalletChallenge, getMyMatches, getMyRating, getQueueStatus, joinMatchmakingQueue, leaveMatchmakingQueue, verifyWalletChallenge } from "@/lib/api/arena.functions";
 
 type StandardWallet = {
@@ -331,6 +332,7 @@ export function WalletArena({ authOnly = false }: { authOnly?: boolean } = {}) {
         <small style={{ color: "#d8d2e5", fontSize: "12px", lineHeight: 1.55 }}>Only enter your private key inside the official wallet app or extension you chose. Never paste it into TradeDuel, a website form, or a chat. Verify the imported public address matches Pump.fun before connecting.</small>
       </div>
     </div>}
+    {wallet && <TradingWalletLink />}
     {!authOnly && wallet && <div className="td-legacy-queue-retired" role="status" style={{marginTop:"18px",padding:"16px",border:"1px solid rgba(167,139,250,0.28)",borderRadius:"12px"}}><strong>Legacy matchmaking queue retired</strong><p style={{margin:"8px 0 0",fontSize:"13px",color:"#c9c4d8"}}>Use the public match browser or create a private lobby to enter the current match flow.</p><Link className="td-match-open-link" to="/matchmaking">Open current matchmaking ↗</Link></div>}
     <p className="td-wallet-notice" role="status">{notice}</p>
     {!authOnly && matches.length > 0 && <div className="td-my-matches"><span className="td-mini-label">YOUR MATCH HISTORY</span>{matches.map((match) => <div className="td-my-match" key={match.id}><span><strong>{shortWallet(match.player_one)}</strong> <em>vs</em> <strong>{match.player_two ? shortWallet(match.player_two) : "Waiting for opponent"}</strong></span><span className="td-status-pill">{match.status.toUpperCase()}</span><small>{match.verification_status === "verified" ? "Verified" : "Legacy match · unranked"}</small><Link className="td-match-open-link" to="/match/$matchId" params={{matchId:match.id}}>Open match ↗</Link></div>)}</div>}
