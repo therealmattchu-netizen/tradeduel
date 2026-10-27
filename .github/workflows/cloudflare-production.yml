@@ -86,3 +86,5 @@ jobs:
 # Trigger production deployment after fixing surrender settlement syntax.
 
 # [deploy-production] Deploy newest-observation live scoring fix.
+
+# [deploy-production] Ship responsive valuation sampling and bounded indexing.
