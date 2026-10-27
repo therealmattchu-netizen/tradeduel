@@ -97,3 +97,5 @@ jobs:
 # [deploy-production] Deploy sold-out token realized PnL retention fix.
 
 # [deploy-production] Fix match history visibility and ELO result display.
+
+# [deploy-production] Include surrender ELO persistence fix in match history release.
