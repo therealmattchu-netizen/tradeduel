@@ -1,4 +1,4 @@
-name: Deploy TradeDuel preview to Cloudflare
+name: Deploy TradeDuel independent preview to Cloudflare
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: cloudflare-preview
     steps:
-      - name: Check out migration branch
+      - name: Check out cloudflare audit branch
         uses: actions/checkout@v4
         with:
           ref: migration/cloudflare-audit
@@ -30,14 +30,37 @@ jobs:
           bun run build
           bun test tests/*.test.ts
 
-      - name: Apply D1 migrations to preview database
-        run: bunx wrangler@latest d1 migrations apply tradeduel-db --remote
+      - name: Generate isolated preview Worker config
+        env:
+          CLOUDFLARE_PREVIEW_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_PREVIEW_D1_DATABASE_ID }}
+          TRADEDUEL_PREVIEW_HOSTNAME: ${{ secrets.TRADEDUEL_PREVIEW_HOSTNAME }}
+        run: |
+          test -n "$CLOUDFLARE_PREVIEW_D1_DATABASE_ID" || (echo "Missing cloudflare-preview secret CLOUDFLARE_PREVIEW_D1_DATABASE_ID" && exit 1)
+          test -n "$TRADEDUEL_PREVIEW_HOSTNAME" || (echo "Missing cloudflare-preview secret TRADEDUEL_PREVIEW_HOSTNAME (full workers.dev hostname, without https://)" && exit 1)
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const config = JSON.parse(fs.readFileSync('wrangler.jsonc', 'utf8'));
+          const databaseId = process.env.CLOUDFLARE_PREVIEW_D1_DATABASE_ID.trim();
+          const hostname = process.env.TRADEDUEL_PREVIEW_HOSTNAME.trim().toLowerCase();
+          if (!/^[0-9a-f-]{36}$/i.test(databaseId)) throw new Error('Preview D1 database ID is not a valid UUID.');
+          if (!/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(hostname) || hostname.includes('://') || hostname.includes('/')) throw new Error('Preview hostname must be a hostname only, without scheme or path.');
+          config.name = 'tradeduel-preview';
+          const db = (config.d1_databases ?? []).find((item) => item.binding === 'DB');
+          if (!db) throw new Error('The DB D1 binding is missing from wrangler.jsonc.');
+          db.database_name = 'tradeduel-preview-db';
+          db.database_id = databaseId;
+          config.vars = { ...(config.vars ?? {}), TRADEDUEL_ALLOWED_ORIGINS: `http://localhost:5173,https://${hostname}`, TRADEDUEL_WALLET_DOMAIN: hostname };
+          fs.writeFileSync('wrangler.preview.jsonc', JSON.stringify(config, null, 2) + '\n');
+          NODE
+
+      - name: Apply migrations to the isolated preview database
+        run: bunx wrangler@latest d1 migrations apply tradeduel-preview-db --remote --config wrangler.preview.jsonc
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Deploy preview Worker
-        run: bunx wrangler@latest deploy
+        run: bunx wrangler@latest deploy --config wrangler.preview.jsonc
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
