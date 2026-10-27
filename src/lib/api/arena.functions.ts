@@ -1916,12 +1916,14 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
           }
         }catch{}}
         const tokenValues=tokenBalances.map(t=>({...t,...(names.get(t.mint)??{}),priceUsd:prices.get(t.mint)??null,marketCapUsd:caps.get(t.mint)??null,liquidityUsd:liquidity.get(t.mint)??null,valueUsd:prices.has(t.mint)?t.amount*prices.get(t.mint)!:null}));
+        // Include the SOL/USD oracle mark in the snapshot JSON even when the wallet has no wrapped-SOL SPL account. The match scorer reads this mark to convert SOL-denominated trade P&L into USD.
+        const snapshotTokenValues=[...tokenValues,{mint:wrappedSol,amount:0,name:"Solana",symbol:"SOL",priceUsd:prices.get(wrappedSol)??null,marketCapUsd:null,liquidityUsd:null,valueUsd:0}];
         const solPrice=prices.get(wrappedSol),unpriced=tokenValues.filter(t=>t.valueUsd===null).length;
         const complete=tokenAccountsComplete&&solPrice!==undefined&&unpriced===0&&tokenBalances.length<=29;
         const portfolioUsd=(solPrice!==undefined?balance.value/1e9*solPrice:0)+tokenValues.reduce((sum,t)=>sum+(t.valueUsd??0),0);
         const note=complete?"Live balance snapshot with current spot quotes; display estimate only, not settlement evidence.":(!tokenAccountsComplete?"Partial live estimate: at least one SPL token-account query failed, so balances may be incomplete. Not settlement evidence.":"Partial live estimate: one or more assets lack a qualifying quote. Unpriced assets are excluded; not settlement evidence.");
         await DB.prepare("INSERT OR IGNORE INTO td_match_valuation_observations (match_id,wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?)")
-          .bind(data.matchId,ownerWallet,nowSec,balance.value/1e9,prices.size?portfolioUsd:null,JSON.stringify(tokenValues),tokenValues.length-unpriced,unpriced,complete?1:0,note).run();
+          .bind(data.matchId,ownerWallet,nowSec,balance.value/1e9,prices.size?portfolioUsd:null,JSON.stringify(snapshotTokenValues),tokenValues.length-unpriced,unpriced,complete?1:0,note).run();
       } catch(error) { errors.push(ownerWallet.slice(0,5)+": "+(error instanceof Error?error.message:"refresh failed")); }
     }
     const rows=await DB.prepare("SELECT wallet,observed_at,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note FROM td_match_valuation_observations WHERE match_id=? ORDER BY observed_at DESC LIMIT 500").bind(data.matchId).all<{wallet:string;observed_at:number;portfolio_usd:number|null;token_balances_json:string;priced_mints:number;unpriced_mints:number;complete:number;integrity_note:string}>();
