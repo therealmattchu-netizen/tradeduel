@@ -6,23 +6,17 @@ type Provider = {
   connect: () => Promise<{ publicKey?: { toString(): string } } | void>;
   signMessage: (message: Uint8Array, display?: "utf8") => Promise<{ signature: Uint8Array } | Uint8Array>;
 };
-declare global {
-  interface Window {
-    phantom?: { solana?: Provider };
-    solflare?: Provider;
-    backpack?: Provider | { solana?: Provider };
-  }
-}
 const WALLET_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const b64 = (bytes: Uint8Array) => { let s=""; for(const b of bytes)s+=String.fromCharCode(b); return btoa(s); };
 const short = (value: string) => value.length > 14 ? value.slice(0,6)+"…"+value.slice(-5) : value;
 
 function providerChoices(): Array<{name:string;provider:Provider}> {
   if(typeof window==="undefined") return [];
-  const backpack = window.backpack && "solana" in window.backpack ? window.backpack.solana : window.backpack as Provider|undefined;
+  const win = window as unknown as { phantom?: {solana?:Provider}; solflare?:Provider; backpack?:Provider|{solana?:Provider} };
+  const backpack = win.backpack && "solana" in win.backpack ? win.backpack.solana : win.backpack as Provider|undefined;
   const choices = [
-    {name:"Phantom",provider:window.phantom?.solana},
-    {name:"Solflare",provider:window.solflare},
+    {name:"Phantom",provider:win.phantom?.solana},
+    {name:"Solflare",provider:win.solflare},
     {name:"Backpack",provider:backpack},
   ];
   return choices.filter((item):item is {name:string;provider:Provider}=>Boolean(item.provider?.connect&&item.provider?.signMessage));
