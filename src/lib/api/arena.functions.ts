@@ -1718,7 +1718,7 @@ export const getPublicPlayerProfile = createServerFn({ method: "GET" })
     if(!DB) return {profile:null,recentMatches:[]};
     const row=await DB.prepare("SELECT wallet,display_name,avatar_data_url,rating,wins,losses,draws FROM td_users WHERE wallet=?").bind(data.wallet).first<any>();
     if(!row)return {profile:null,recentMatches:[]};
-    const history=await DB.prepare("SELECT match_id,opponent_wallet,return_pct,elo_before,elo_after,elo_delta,outcome,settled_at FROM td_custom_match_elo_results WHERE wallet=? ORDER BY settled_at DESC LIMIT 10").bind(data.wallet).all<any>();
+    const history=await DB.prepare("SELECT r.match_id,r.opponent_wallet,u.display_name AS opponent_display_name,u.avatar_data_url AS opponent_avatar_data_url,r.return_pct,r.elo_before,r.elo_after,r.elo_delta,r.outcome,r.settled_at FROM td_custom_match_elo_results r LEFT JOIN td_users u ON u.wallet=r.opponent_wallet WHERE r.wallet=? ORDER BY r.settled_at DESC LIMIT 100").bind(data.wallet).all<any>();
     return {profile:{wallet:row.wallet,displayName:row.display_name??"",avatarDataUrl:row.avatar_data_url??null,rating:row.rating??1000,wins:row.wins??0,losses:row.losses??0,draws:row.draws??0},recentMatches:history.results??[]};
   });
 
