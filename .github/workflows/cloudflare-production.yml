@@ -101,3 +101,4 @@ jobs:
 # [deploy-production] Include surrender ELO persistence fix in match history release.
 
 # [deploy-production] Ship prominent saved ELO completion popup and history display.
+# [deploy-production] Fix nullable opponent profile access and rebuild ELO history release.
