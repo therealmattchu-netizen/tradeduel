@@ -79,7 +79,7 @@ function CustomLiveMatch(){
     if(!token||typeof token.priceUsd!=="number"||token.priceUsd<=0||solPrice===null||solPrice<=0){unpricedOpenLots=true;continue;}
     openValueSol+=(qty*token.priceUsd)/solPrice;
   }
-  const hasAmbiguousActivity=((activity?.events??[]) as Array<{wallet:string;block_time:number|null;event_type:string}>).some(e=>e.wallet===m.wallet&&e.block_time!==null&&startSec!==null&&e.block_time>=startSec&&(!["pump_fun_buy_candidate","pump_fun_sell_candidate"].includes(e.event_type)));
+  const hasAmbiguousActivity=((activity?.events??[]) as Array<{wallet:string;block_time:number|null;event_type:string}>).some(e=>e.wallet===m.wallet&&e.block_time!==null&&startSec!==null&&e.block_time>=startSec&&(!["pump_fun_buy_candidate","pump_fun_sell_candidate"].includes(e.event_type)))||((activity?.events??[]).length>=60)||((activity?.accountingLedger??[]).length>=100);
   const pnlSol=realizedPnlSol+openValueSol-remainingCostSol;
   const pct=eligibleBuyCount>0&&totalBuyCostSol>0&&!unmatchedSell&&!unpricedOpenLots&&!hasAmbiguousActivity?pnlSol/totalBuyCostSol*100:null;
   const change=pct!==null&&solPrice!==null?pnlSol*solPrice:null;
