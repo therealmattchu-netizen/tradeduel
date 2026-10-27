@@ -1860,9 +1860,10 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         if(previous && nowSec-previous.observed_at<5) continue;
         const [balance,classic,token2022]=await Promise.all([
           solanaRpcCall("getBalance",[trackedWallet,{commitment:"confirmed"}]) as Promise<{value:number}>,
-          (solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},{encoding:"jsonParsed",commitment:"confirmed"}]).catch(()=>({value:[]})) as Promise<ParsedTokenAccounts>),
+          (solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},{encoding:"jsonParsed",commitment:"confirmed"}]).catch(()=>({value:[],__failed:true} as any)) as Promise<ParsedTokenAccounts & {__failed?:boolean}>),
           (solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"},{encoding:"jsonParsed",commitment:"confirmed"}]).catch(()=>({value:[]})) as Promise<ParsedTokenAccounts>),
         ]);
+        const tokenAccountsComplete=!classic.__failed&&!token2022.__failed;
         const tokenBalances=[...classic.value,...token2022.value].map((entry:any)=>({mint:entry.account.data.parsed.info.mint,amount:Number(entry.account.data.parsed.info.tokenAmount.uiAmountString??entry.account.data.parsed.info.tokenAmount.uiAmount??0)})).filter(t=>Number.isFinite(t.amount)&&t.amount>0);
         const mints=[...new Set([wrappedSol,...tokenBalances.map(t=>t.mint)])].slice(0,30);
         type Pair={baseToken?:{address?:string;name?:string;symbol?:string};priceUsd?:string;liquidity?:{usd?:number};marketCap?:number;fdv?:number;url?:string};
@@ -1896,9 +1897,9 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         }catch{}}
         const tokenValues=tokenBalances.map(t=>({...t,...(names.get(t.mint)??{}),priceUsd:prices.get(t.mint)??null,marketCapUsd:caps.get(t.mint)??null,liquidityUsd:liquidity.get(t.mint)??null,valueUsd:prices.has(t.mint)?t.amount*prices.get(t.mint)!:null}));
         const solPrice=prices.get(wrappedSol),unpriced=tokenValues.filter(t=>t.valueUsd===null).length;
-        const complete=solPrice!==undefined&&unpriced===0&&tokenBalances.length<=29;
+        const complete=tokenAccountsComplete&&solPrice!==undefined&&unpriced===0&&tokenBalances.length<=29;
         const portfolioUsd=(solPrice!==undefined?balance.value/1e9*solPrice:0)+tokenValues.reduce((sum,t)=>sum+(t.valueUsd??0),0);
-        const note=complete?"Live balance snapshot with current spot quotes; display estimate only, not settlement evidence.":"Partial live estimate: one or more assets lack a qualifying quote. Unpriced assets are excluded; not settlement evidence.";
+        const note=complete?"Live balance snapshot with current spot quotes; display estimate only, not settlement evidence.":(!tokenAccountsComplete?"Partial live estimate: at least one SPL token-account query failed, so balances may be incomplete. Not settlement evidence.":"Partial live estimate: one or more assets lack a qualifying quote. Unpriced assets are excluded; not settlement evidence.");
         await DB.prepare("INSERT OR IGNORE INTO td_match_valuation_observations (match_id,wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?)")
           .bind(data.matchId,ownerWallet,nowSec,balance.value/1e9,prices.size?portfolioUsd:null,JSON.stringify(tokenValues),tokenValues.length-unpriced,unpriced,complete?1:0,note).run();
       } catch(error) { errors.push(ownerWallet.slice(0,5)+": "+(error instanceof Error?error.message:"refresh failed")); }
