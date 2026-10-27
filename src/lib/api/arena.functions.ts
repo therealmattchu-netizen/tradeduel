@@ -603,7 +603,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   // Quarantine repeatedly unavailable transactions rather than retrying them on every room poll.
   await DB.prepare("UPDATE td_match_index_queue SET status='skipped',last_error=COALESCE(last_error,'retry_limit_reached'),updated_at=datetime('now') WHERE match_id=? AND wallet=? AND status='retry' AND attempts>=8")
     .bind(match.id,trackedWallet).run();
-  const pending = await DB.prepare("SELECT signature,slot,block_time,tx_error_json FROM td_match_index_queue WHERE match_id = ? AND wallet = ? AND (status='pending' OR (status='retry' AND attempts<8 AND updated_at<=datetime('now','-2 minutes'))) ORDER BY id LIMIT 12")
+  const pending = await DB.prepare("SELECT signature,slot,block_time,tx_error_json FROM td_match_index_queue WHERE match_id = ? AND wallet = ? AND (status='pending' OR (status='retry' AND attempts<8 AND updated_at<=datetime('now','-2 minutes'))) ORDER BY block_time DESC,id DESC LIMIT 12")
     .bind(match.id,trackedWallet).all<{signature:string;slot:number;block_time:number|null;tx_error_json:string|null}>();
   let walletIndexed = 0;
   for (const sig of pending.results ?? []) {
@@ -805,6 +805,42 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
         const cap = Number(best.marketCap ?? best.fdv ?? 0); if (Number.isFinite(cap) && cap > 0) marketCaps.set(mint, cap);
         tokenNames.set(mint, {name:best.baseToken?.name ?? null,symbol:best.baseToken?.symbol ?? null,pairUrl:best.url ?? null});
       } catch { /* Keep this wallet observation incomplete if no reliable quote exists. */ }
+    }));
+    // Pump.fun bonding-curve coins can have a live USD market cap before a
+    // DexScreener pool is indexed. Query the public coin endpoint for a small,
+    // bounded set of held mints that lack a market-cap mark or a usable spot price.
+    const pumpFallbackMints = [...new Set(tokenBalances.map(entry => entry.mint))]
+      .filter(mint => !marketCaps.has(mint) || !prices.has(mint))
+      .slice(0, 8);
+    await Promise.all(pumpFallbackMints.map(async mint => {
+      try {
+        const response = await fetch("https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint), {
+          headers: { accept: "application/json" },
+          signal: AbortSignal.timeout(3500),
+        });
+        if (!response.ok) return;
+        const coin = await response.json() as {
+          name?: string; symbol?: string; usd_market_cap?: number | string;
+          market_cap_usd?: number | string; total_supply?: number | string;
+          decimals?: number | string; complete?: boolean;
+        };
+        const cap = Number(coin.usd_market_cap ?? coin.market_cap_usd);
+        if (Number.isFinite(cap) && cap > 0 && !marketCaps.has(mint)) marketCaps.set(mint, cap);
+        if (!tokenNames.has(mint) && (coin.name || coin.symbol)) {
+          tokenNames.set(mint, { name: coin.name ?? null, symbol: coin.symbol ?? null, pairUrl: "https://pump.fun/coin/" + mint });
+        }
+        // Derive a provisional display/live-score quote only when the API supplies
+        // a parseable supply. Pump.fun often reports raw token units (6 decimals).
+        if (!prices.has(mint) && Number.isFinite(cap) && cap > 0) {
+          const rawSupply = Number(coin.total_supply);
+          const decimals = Number(coin.decimals ?? 6);
+          const supply = Number.isFinite(rawSupply) && rawSupply > 0
+            ? (rawSupply > 1e12 ? rawSupply / Math.pow(10, Number.isFinite(decimals) ? Math.min(18, Math.max(0, decimals)) : 6) : rawSupply)
+            : NaN;
+          const provisionalPrice = cap / supply;
+          if (Number.isFinite(provisionalPrice) && provisionalPrice > 0 && supply > 0) prices.set(mint, provisionalPrice);
+        }
+      } catch { /* Keep unknown bonding-curve tokens pending instead of inventing a quote. */ }
     }));
     // Wrapped SOL may appear as the quote asset in pools. Recover a SOL/USD
     // estimate from liquid quote-side pools if the base-token lookup missed it.
