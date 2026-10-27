@@ -1363,7 +1363,7 @@ export const createCustomMatch = createServerFn({ method: "POST" })
     if (data.visibility === "public" && password) throw new Error("Public matches do not use passwords.");
     const id = crypto.randomUUID();
     const passwordHash = data.visibility === "private" ? await hash(password) : null;
-    const team = data.mode === "head_to_head" ? 1 : 1;
+    const team = 1;
     await DB.batch([
       DB.prepare("INSERT INTO td_custom_matches (id,creator_wallet,mode,visibility,max_players,duration_seconds,password_hash,status) VALUES (?,?,?,?,?,?,?,'open')")
         .bind(id,wallet,data.mode,data.visibility,data.maxPlayers,data.durationSeconds,passwordHash),
@@ -1389,7 +1389,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     }
     const counts = await DB.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN team_number=1 THEN 1 ELSE 0 END) AS team_one FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number;team_one:number|null}>();
     if ((counts?.total ?? 0) >= match.max_players) throw new Error("This match is full.");
-    const teamSize = (match.mode === "head_to_head" || match.mode === "head_to_head_percentage") ? 1 : match.max_players / 2;
+    const teamSize = 1;
     const team = (counts?.team_one ?? 0) < teamSize ? 1 : 2;
     await DB.prepare("INSERT INTO td_custom_match_members (match_id,wallet,team_number) VALUES (?,?,?)").bind(match.id,wallet,team).run();
     const after = await DB.prepare("SELECT COUNT(*) AS total FROM td_custom_match_members WHERE match_id=?").bind(match.id).first<{total:number}>();
