@@ -709,6 +709,21 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
         tokenNames.set(mint,{name:pair.baseToken?.name??null,symbol:pair.baseToken?.symbol??null,pairUrl:pair.url??null});
       }
     }
+    // Batched quote responses can omit individual holdings even when other tokens are priced.
+    // Retry missing mints individually so one missing batch entry does not freeze this wallet.
+    const missingMints = [...new Set(["So11111111111111111111111111111111111111112", ...tokenBalances.map(entry => entry.mint)])].filter(mint => !prices.has(mint)).slice(0, 15);
+    await Promise.all(missingMints.map(async mint => {
+      try {
+        const response = await fetch("https://api.dexscreener.com/latest/dex/tokens/" + mint, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(4000) });
+        if (!response.ok) return;
+        const body = await response.json() as { pairs?: Array<{baseToken?:{address?:string;name?:string;symbol?:string};priceUsd?:string;liquidity?:{usd?:number};marketCap?:number;fdv?:number;url?:string}> };
+        const best = (body.pairs ?? []).filter(pair => pair.baseToken?.address === mint && Number(pair.priceUsd) > 0 && Number(pair.liquidity?.usd ?? 0) >= 100).sort((left,right) => Number(right.liquidity?.usd ?? 0) - Number(left.liquidity?.usd ?? 0))[0];
+        if (!best) return;
+        prices.set(mint, Number(best.priceUsd)); liquidities.set(mint, Number(best.liquidity?.usd ?? 0));
+        const cap = Number(best.marketCap ?? best.fdv ?? 0); if (Number.isFinite(cap) && cap > 0) marketCaps.set(mint, cap);
+        tokenNames.set(mint, {name:best.baseToken?.name ?? null,symbol:best.baseToken?.symbol ?? null,pairUrl:best.url ?? null});
+      } catch { /* Keep this wallet observation incomplete if no reliable quote exists. */ }
+    }));
     const tokenValues = tokenBalances.map((entry) => ({ ...entry, ...(tokenNames.get(entry.mint)??{}), marketCapUsd:marketCaps.get(entry.mint)??null, priceUsd: prices.get(entry.mint) ?? null, valueUsd: prices.has(entry.mint) ? entry.amount * prices.get(entry.mint)! : null }));
     const solPrice = prices.get("So11111111111111111111111111111111111111112");
     const unpricedMints = tokenValues.filter((entry) => entry.valueUsd === null).length;
