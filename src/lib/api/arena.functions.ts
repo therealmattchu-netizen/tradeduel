@@ -1860,8 +1860,8 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         if(previous && nowSec-previous.observed_at<5) continue;
         const [balance,classic,token2022]=await Promise.all([
           solanaRpcCall("getBalance",[trackedWallet,{commitment:"confirmed"}]) as Promise<{value:number}>,
-          solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},{encoding:"jsonParsed",commitment:"confirmed"}]) as Promise<ParsedTokenAccounts>,
-          solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBfD9W4y7X"} ,{encoding:"jsonParsed",commitment:"confirmed"}]) as Promise<ParsedTokenAccounts>,
+          (solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},{encoding:"jsonParsed",commitment:"confirmed"}]).catch(()=>({value:[]})) as Promise<ParsedTokenAccounts>),
+          (solanaRpcCall("getTokenAccountsByOwner",[trackedWallet,{programId:"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"},{encoding:"jsonParsed",commitment:"confirmed"}]).catch(()=>({value:[]})) as Promise<ParsedTokenAccounts>),
         ]);
         const tokenBalances=[...classic.value,...token2022.value].map((entry:any)=>({mint:entry.account.data.parsed.info.mint,amount:Number(entry.account.data.parsed.info.tokenAmount.uiAmountString??entry.account.data.parsed.info.tokenAmount.uiAmount??0)})).filter(t=>Number.isFinite(t.amount)&&t.amount>0);
         const mints=[...new Set([wrappedSol,...tokenBalances.map(t=>t.mint)])].slice(0,30);
