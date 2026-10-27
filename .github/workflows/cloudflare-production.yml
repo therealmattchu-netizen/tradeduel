@@ -78,3 +78,5 @@ jobs:
 # Trigger production deployment for stable live valuation display updates.
 
 # Trigger deployment for immediate provisional live-return display.
+
+# Trigger deployment for match-eligible live PnL scoring.
