@@ -1191,7 +1191,7 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
     // Official ELO is only awarded for verified Classic percentage 1v1 matches.
     // The conditional claim prevents repeated polling from awarding rating more than once.
     let eloApplied = false;
-    if (status === "verified" && match.mode === "head_to_head_percentage" && roster.length === 2 && returns.length === 2 && returns.every(r => r.returnPct !== null)) {
+    if (status === "verified" && match.mode === "head_to_head" && roster.length === 2 && returns.length === 2 && returns.every(r => r.returnPct !== null)) {
       const claim = await DB.prepare("UPDATE td_custom_match_settlements SET elo_applied=1,updated_at=datetime('now') WHERE match_id=? AND status='verified' AND elo_applied=0").bind(match.id).run();
       if ((claim.meta?.changes ?? 0) === 1) {
         const [one,two] = returns;
@@ -1251,7 +1251,7 @@ export const sendMatchChatMessage = createServerFn({ method: "POST" })
   });
 
 
-const customMatchMode = z.enum(["head_to_head_percentage"]);
+const customMatchMode = z.enum(["head_to_head"]);
 const customMatchVisibility = z.enum(["public", "private"]);
 
 /** Public/private room browser. Private room passwords are never returned to clients. */
@@ -1358,7 +1358,7 @@ export const createCustomMatch = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    if (data.mode !== "head_to_head_percentage" || data.maxPlayers !== 2) {
+    if (data.mode !== "head_to_head" || data.maxPlayers !== 2) {
       throw new Error("TradeDuel currently supports Classic percentage 1v1 only.");
     }
     const password = data.password?.trim() ?? "";
@@ -1384,7 +1384,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     if (!match) throw new Error("This match does not exist.");
     const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
     if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"Already a member of this match." };
-    if (match.mode !== "head_to_head_percentage" || match.max_players !== 2) throw new Error("Only Classic percentage 1v1 matches are currently available.");
+    if (match.mode !== "head_to_head" || match.max_players !== 2) throw new Error("Only Classic percentage 1v1 matches are currently available.");
     if (match.status !== "open") throw new Error("This match is no longer open for new players.");
     if (match.visibility === "private") {
       const provided = data.password?.trim() ?? "";
@@ -1498,7 +1498,7 @@ export const requestCustomMatchRematch = createServerFn({ method: "POST" })
   .handler(async ({data})=>{
     const {DB,wallet}=await requireSession(data.token);
     const match=await DB.prepare("SELECT status,mode,duration_seconds FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{status:string;mode:string;duration_seconds:number}>();
-    if(!match||match.status!=="completed"||match.mode!=="head_to_head_percentage")throw new Error("Only completed Classic matches can be rematched.");
+    if(!match||match.status!=="completed"||match.mode!=="head_to_head")throw new Error("Only completed Classic matches can be rematched.");
     const result=await DB.prepare("SELECT opponent_wallet,return_pct,outcome FROM td_custom_match_elo_results WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{opponent_wallet:string;return_pct:number;outcome:string}>();
     if(!result)throw new Error("A verified result is required before requesting a rematch.");
     if(result.outcome!=="loss")throw new Error("Only the losing player can request a rematch.");
@@ -1515,7 +1515,7 @@ export const respondCustomMatchRematch = createServerFn({ method: "POST" })
   .handler(async ({data})=>{
     const {DB,wallet}=await requireSession(data.token);
     const match=await DB.prepare("SELECT duration_seconds,mode,status FROM td_custom_matches WHERE id=?").bind(data.matchId).first<{duration_seconds:number;mode:string;status:string}>();
-    if(!match||match.status!=="completed"||match.mode!=="head_to_head_percentage")throw new Error("The original match is not eligible for a rematch.");
+    if(!match||match.status!=="completed"||match.mode!=="head_to_head")throw new Error("The original match is not eligible for a rematch.");
     const request=await DB.prepare("SELECT requested_by,opponent_wallet,status,new_match_id FROM td_custom_match_rematches WHERE match_id=?").bind(data.matchId).first<{requested_by:string;opponent_wallet:string;status:string;new_match_id:string|null}>();
     if(!request)throw new Error("No rematch has been requested.");
     if(request.opponent_wallet!==wallet)throw new Error("Only the opponent can respond to this rematch.");
