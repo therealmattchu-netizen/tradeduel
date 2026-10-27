@@ -1187,7 +1187,38 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
     const txCount=await DB.prepare("SELECT COUNT(*) AS count FROM td_match_accounting_ledger WHERE match_id=?").bind(match.id).first<{count:number}>();
     await DB.prepare("INSERT INTO td_custom_match_settlements (match_id,status,team_one_return_pct,team_two_return_pct,member_returns_json,blockers_json,indexed_transactions,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET status=excluded.status,team_one_return_pct=excluded.team_one_return_pct,team_two_return_pct=excluded.team_two_return_pct,member_returns_json=excluded.member_returns_json,blockers_json=excluded.blockers_json,indexed_transactions=excluded.indexed_transactions,updated_at=datetime('now')")
       .bind(match.id,status,teamOne,teamTwo,JSON.stringify(returns),JSON.stringify(unique),txCount?.count??0).run();
-    return {matchId:match.id,status,teamOneReturnPct:teamOne,teamTwoReturnPct:teamTwo,members:returns,blockers:unique,priceLookupsThisRun:quoteLookups,indexedTransactions:txCount?.count??0,eloApplied:false,message:status==="verified"?"All team members passed the configured historical portfolio reconciliation checks.":"Team scores remain unverified until all historical prices, snapshots, transaction history, transfers, and lifecycle effects are reconciled."};
+
+    // Official ELO is only awarded for verified Classic percentage 1v1 matches.
+    // The conditional claim prevents repeated polling from awarding rating more than once.
+    let eloApplied = false;
+    if (status === "verified" && match.mode === "head_to_head_percentage" && roster.length === 2 && returns.length === 2 && returns.every(r => r.returnPct !== null)) {
+      const claim = await DB.prepare("UPDATE td_custom_match_settlements SET elo_applied=1,updated_at=datetime('now') WHERE match_id=? AND status='verified' AND elo_applied=0").bind(match.id).run();
+      if ((claim.meta?.changes ?? 0) === 1) {
+        const [one,two] = returns;
+        const [userOne,userTwo] = await Promise.all([
+          DB.prepare("SELECT rating FROM td_users WHERE wallet=?").bind(one.wallet).first<{rating:number}>(),
+          DB.prepare("SELECT rating FROM td_users WHERE wallet=?").bind(two.wallet).first<{rating:number}>(),
+        ]);
+        const ratingOne = userOne?.rating ?? 1000;
+        const ratingTwo = userTwo?.rating ?? 1000;
+        const expectedOne = 1 / (1 + Math.pow(10, (ratingTwo-ratingOne)/400));
+        const expectedTwo = 1 - expectedOne;
+        const scoreOne = Math.abs((one.returnPct ?? 0) - (two.returnPct ?? 0)) < 1e-8 ? 0.5 : (one.returnPct! > two.returnPct! ? 1 : 0);
+        const scoreTwo = 1 - scoreOne;
+        const nextOne = Math.max(0, Math.round(ratingOne + 32 * (scoreOne-expectedOne)));
+        const nextTwo = Math.max(0, Math.round(ratingTwo + 32 * (scoreTwo-expectedTwo)));
+        const draw = scoreOne === 0.5;
+        await DB.batch([
+          DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(nextOne,scoreOne===1?1:0,scoreOne===0?1:0,draw?1:0,one.wallet),
+          DB.prepare("UPDATE td_users SET rating=?,wins=wins+?,losses=losses+?,draws=draws+? WHERE wallet=?").bind(nextTwo,scoreTwo===1?1:0,scoreTwo===0?1:0,draw?1:0,two.wallet),
+        ]);
+        eloApplied = true;
+      } else {
+        const existing = await DB.prepare("SELECT elo_applied FROM td_custom_match_settlements WHERE match_id=?").bind(match.id).first<{elo_applied:number}>();
+        eloApplied = existing?.elo_applied === 1;
+      }
+    }
+    return {matchId:match.id,status,teamOneReturnPct:teamOne,teamTwoReturnPct:teamTwo,members:returns,blockers:unique,priceLookupsThisRun:quoteLookups,indexedTransactions:txCount?.count??0,eloApplied,message:status==="verified"?(eloApplied?"Classic percentage result verified; ELO updated exactly once.":"All team members passed the configured historical portfolio reconciliation checks."):"Team scores remain unverified until all historical prices, snapshots, transaction history, transfers, and lifecycle effects are reconciled."};
   });
 
 /** Returns chat messages only to a verified participant in this match. */
