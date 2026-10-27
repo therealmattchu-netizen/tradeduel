@@ -64,6 +64,7 @@ jobs:
           NODE
 
       - name: Apply pending migrations to production D1
+        if: ${{ !contains(github.event.head_commit.message, '[skip-d1-migrations]') }}
         run: bunx wrangler@latest d1 migrations apply tradeduel-db --remote --config wrangler.production.jsonc
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
