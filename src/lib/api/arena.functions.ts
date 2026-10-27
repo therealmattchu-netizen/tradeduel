@@ -2016,7 +2016,7 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         const tokenAccountsComplete=!classic.__failed&&!token2022.__failed;
         const tokenBalances=[...classic.value,...token2022.value].map((entry:any)=>({mint:entry.account.data.parsed.info.mint,amount:Number(entry.account.data.parsed.info.tokenAmount.uiAmountString??entry.account.data.parsed.info.tokenAmount.uiAmount??0)})).filter(t=>Number.isFinite(t.amount)&&t.amount>0);
         const mints=[...new Set([wrappedSol,...tokenBalances.map(t=>t.mint)])].slice(0,30);
-        type Pair={baseToken?:{address?:string;name?:string;symbol?:string};priceUsd?:string;liquidity?:{usd?:number};marketCap?:number;fdv?:number;url?:string};
+        type Pair={baseToken?:{address?:string;name?:string;symbol?:string};quoteToken?:{address?:string;name?:string;symbol?:string};priceUsd?:string;priceNative?:string;liquidity?:{usd?:number};marketCap?:number;fdv?:number;url?:string};
         let pairs:Pair[]=[];
         try { const response=await fetch("https://api.dexscreener.com/tokens/v1/solana/"+mints.join(","),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)}); if(response.ok)pairs=await response.json() as Pair[]; } catch {}
         const prices=new Map<string,number>(),liquidity=new Map<string,number>(),caps=new Map<string,number>(),names=new Map<string,{name:string|null;symbol:string|null;pairUrl:string|null}>();
@@ -2027,7 +2027,7 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
          await Promise.all(missing.map(async mint=>{try{
            const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+encodeURIComponent(mint),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});
            if(!response.ok)return;
-           const body=await response.json() as {pairs?:Array<Pair&{quoteToken?:{address?:string}} >};
+           const body=await response.json() as {pairs?:Array<Pair>};
            const pair=(body.pairs??[]).filter(p=>(p.baseToken?.address===mint||p.quoteToken?.address===mint)&&Number(p.priceUsd)>0&&Number(p.liquidity?.usd??0)>=25)
              .sort((x,y)=>Number(y.liquidity?.usd??0)-Number(x.liquidity?.usd??0))[0];
            if(pair){
