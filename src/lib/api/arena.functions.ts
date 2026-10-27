@@ -580,7 +580,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     // In parallel with live discovery, advance one durable historical page until
     // the match start boundary is crossed. INSERT OR IGNORE makes overlap safe.
     const lastHistoricalCheck = state?.last_checked_at ? Date.parse(state.last_checked_at.replace(" ","T")+"Z") : 0;
-    const historicalCheckDue = !state || !state.exhausted || !Number.isFinite(lastHistoricalCheck) || Date.now()-lastHistoricalCheck>=30000;
+    const historicalCheckDue = !state || !state.last_checked_at || !Number.isFinite(lastHistoricalCheck) || Date.now()-lastHistoricalCheck>=30000;
     if (historicalCheckDue && (!state || !state.exhausted)) {
       const options:Record<string,unknown> = {limit:100,commitment:"confirmed"};
       if (state?.before_signature) options.before = state.before_signature;
