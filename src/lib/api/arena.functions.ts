@@ -814,31 +814,38 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       .slice(0, 8);
     await Promise.all(pumpFallbackMints.map(async mint => {
       try {
-        const response = await fetch("https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint), {
+        const response = await fetch("https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true", {
           headers: { accept: "application/json" },
-          signal: AbortSignal.timeout(3500),
+          signal: AbortSignal.timeout(4500),
         });
         if (!response.ok) return;
         const coin = await response.json() as {
           name?: string; symbol?: string; usd_market_cap?: number | string;
-          market_cap_usd?: number | string; total_supply?: number | string;
+          market_cap_usd?: number | string; market_cap?: number | string;
+          total_supply?: number | string; total_supply_str?: string;
+          circulating_supply_str?: string; price_usd?: number | string;
           decimals?: number | string; complete?: boolean;
         };
-        const cap = Number(coin.usd_market_cap ?? coin.market_cap_usd);
+        const cap = Number(coin.usd_market_cap ?? coin.market_cap_usd ?? coin.market_cap);
         if (Number.isFinite(cap) && cap > 0 && !marketCaps.has(mint)) marketCaps.set(mint, cap);
         if (!tokenNames.has(mint) && (coin.name || coin.symbol)) {
           tokenNames.set(mint, { name: coin.name ?? null, symbol: coin.symbol ?? null, pairUrl: "https://pump.fun/coin/" + mint });
         }
         // Derive a provisional display/live-score quote only when the API supplies
         // a parseable supply. Pump.fun often reports raw token units (6 decimals).
-        if (!prices.has(mint) && Number.isFinite(cap) && cap > 0) {
-          const rawSupply = Number(coin.total_supply);
-          const decimals = Number(coin.decimals ?? 6);
-          const supply = Number.isFinite(rawSupply) && rawSupply > 0
-            ? (rawSupply > 1e12 ? rawSupply / Math.pow(10, Number.isFinite(decimals) ? Math.min(18, Math.max(0, decimals)) : 6) : rawSupply)
-            : NaN;
-          const provisionalPrice = cap / supply;
-          if (Number.isFinite(provisionalPrice) && provisionalPrice > 0 && supply > 0) prices.set(mint, provisionalPrice);
+        if (!prices.has(mint)) {
+          const directPrice = Number(coin.price_usd);
+          if (Number.isFinite(directPrice) && directPrice > 0) {
+            prices.set(mint, directPrice);
+          } else if (Number.isFinite(cap) && cap > 0) {
+            const rawSupply = Number(coin.circulating_supply_str ?? coin.total_supply_str ?? coin.total_supply);
+            const decimals = Number(coin.decimals ?? 6);
+            const supply = Number.isFinite(rawSupply) && rawSupply > 0
+              ? (rawSupply > 1e12 ? rawSupply / Math.pow(10, Number.isFinite(decimals) ? Math.min(18, Math.max(0, decimals)) : 6) : rawSupply)
+              : NaN;
+            const provisionalPrice = cap / supply;
+            if (Number.isFinite(provisionalPrice) && provisionalPrice > 0 && supply > 0) prices.set(mint, provisionalPrice);
+          }
         }
       } catch { /* Keep unknown bonding-curve tokens pending instead of inventing a quote. */ }
     }));
