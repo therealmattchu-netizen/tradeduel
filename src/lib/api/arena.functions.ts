@@ -1774,15 +1774,31 @@ export const getCustomMatchResult = createServerFn({ method: "POST" })
     return {results:rows.results??[],viewerWallet:wallet,verified:(rows.results??[]).length===2};
   });
 
-/** Signed-in player's verified Classic match history, including immutable before/after ratings. */
+/** Signed-in player's match history. Keep completed matches visible even when settlement
+ * has not produced an official ELO row yet; never fabricate a rating delta. */
 export const getCustomMatchHistory = createServerFn({ method: "POST" })
   .validator(z.object({ token:z.string().min(24), limit:z.number().int().min(1).max(100).optional() }))
   .handler(async ({data})=>{
     const {DB,wallet}=await requireSession(data.token);
-    const rows=await DB.prepare(`SELECT r.match_id,r.wallet,r.opponent_wallet,r.return_pct,r.elo_before,r.elo_after,r.elo_delta,r.outcome,r.settled_at,
-      m.started_at,m.ends_at,m.duration_seconds,m.mode,m.status
-      FROM td_custom_match_elo_results r JOIN td_custom_matches m ON m.id=r.match_id
-      WHERE r.wallet=? ORDER BY r.settled_at DESC LIMIT ?`).bind(wallet,data.limit??50).all<any>();
+    const rows=await DB.prepare(`SELECT m.id AS match_id, mine.wallet,
+      COALESCE(r.opponent_wallet, (
+        SELECT other.wallet FROM td_custom_match_members other
+        WHERE other.match_id=m.id AND other.wallet<>mine.wallet
+        ORDER BY other.team_number,other.wallet LIMIT 1
+      )) AS opponent_wallet,
+      r.return_pct,r.elo_before,r.elo_after,r.elo_delta,
+      COALESCE(r.outcome, CASE WHEN m.status='completed' THEN 'unverified' ELSE 'pending' END) AS outcome,
+      COALESCE(r.settled_at,m.updated_at,m.ends_at,m.started_at,m.created_at) AS settled_at,
+      m.started_at,m.ends_at,m.duration_seconds,m.mode,m.status,
+      CASE WHEN r.match_id IS NULL THEN 0 ELSE 1 END AS elo_recorded,
+      CASE WHEN s.blockers_json LIKE '%surrender_forfeit%' THEN 1 ELSE 0 END AS is_forfeit
+      FROM td_custom_match_members mine
+      JOIN td_custom_matches m ON m.id=mine.match_id
+      LEFT JOIN td_custom_match_elo_results r ON r.match_id=m.id AND r.wallet=mine.wallet
+      LEFT JOIN td_custom_match_settlements s ON s.match_id=m.id
+      WHERE mine.wallet=? AND m.status IN ('completed','cancelled')
+      ORDER BY COALESCE(r.settled_at,m.updated_at,m.ends_at,m.started_at,m.created_at) DESC
+      LIMIT ?`).bind(wallet,data.limit??50).all<any>();
     return {wallet,matches:rows.results??[]};
   });
 
