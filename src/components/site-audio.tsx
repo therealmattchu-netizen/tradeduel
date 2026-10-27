@@ -116,7 +116,8 @@ export function SiteAudio() {
   }, [prefs]);
 
   // Synthesized looping melodies: cheerful plucked major-key notes in the lobby;
-  // tense minor-key arpeggios with a low pulse during a duel.
+  // faster minor-key arpeggios, a heavier sub pulse, and a darker register build tension in duels.
+  // Both standard and custom match routes use the duel soundtrack.
   useEffect(() => {
     sceneRef.current = scene;
     const ctx = ensureAudio();
