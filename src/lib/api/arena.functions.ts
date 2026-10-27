@@ -1212,7 +1212,7 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
         const expected = 1/(1+Math.pow(10,(avgRating[1]-avgRating[0])/400));
         const scores = [draw?0.5:winningTeam===1?1:0, draw?0.5:winningTeam===2?1:0];
         const teamDelta = scores.map((score,i)=>Math.round(32*(score-(i===0?expected:1-expected))));
-        const statements: D1PreparedStatement[] = [];
+        const statements: Array<ReturnType<typeof DB.prepare>> = [];
         for (const member of userRatings) {
           const teamIndex=member.team_number-1;
           const delta=teamDelta[teamIndex];
