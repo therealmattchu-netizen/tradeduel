@@ -151,7 +151,7 @@ function ActiveMatchReturn() {
   if (!matchId) return null;
   return (
     <a href={`/custom-match/${encodeURIComponent(matchId)}`} aria-label="Return to your active TradeDuel match"
-      style={{ position: "fixed", zIndex: 1000, right: 18, top: 18, display: "inline-flex", alignItems: "center", gap: 9, padding: "11px 15px", borderRadius: 10, border: "1px solid var(--td-accent)", background: "var(--td-bg)", color: "var(--td-text)", boxShadow: "0 8px 30px rgba(0,0,0,.35)", textDecoration: "none", fontSize: 13, fontWeight: 800 }}>
+      style={{ position: "fixed", zIndex: 1000, right: 18, top: 18, display: "inline-flex", alignItems: "center", gap: 9, padding: "11px 15px", borderRadius: 10, border: "1px solid var(--td-accent)", background: "var(--td-bg)", color: "var(--td-text)", textDecoration: "none", fontSize: 13, fontWeight: 800 }}>
       <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--td-success)", boxShadow: "0 0 10px var(--td-success)" }} />
       Return to active match <span style={{ color: "var(--td-accent)" }}>↗</span>
     </a>
