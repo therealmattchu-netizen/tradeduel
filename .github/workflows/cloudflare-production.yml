@@ -88,3 +88,5 @@ jobs:
 # [deploy-production] Deploy newest-observation live scoring fix.
 
 # [deploy-production] Ship responsive valuation sampling and bounded indexing.
+
+# [deploy-production] Deploy linked-wallet live scoring integration.
