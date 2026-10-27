@@ -16,6 +16,16 @@ const tokenPrice=(n:number|null|undefined)=>{if(n==null||!Number.isFinite(n)||n<
 const percent=(n:number)=>Math.abs(n)>0&&Math.abs(n)<0.01?n.toFixed(4):n.toFixed(2);
 function CustomLiveMatch(){
  const {matchId}=Route.useParams();
+ // Keep a durable in-tab pointer so players can return to this room after navigating away.
+ useEffect(()=>{
+  const key="td_active_custom_match_id";
+  const sync=()=>{
+   if(room?.status==="active")window.sessionStorage.setItem(key,matchId);
+   else if(room?.status==="completed"&&window.sessionStorage.getItem(key)===matchId)window.sessionStorage.removeItem(key);
+   window.dispatchEvent(new CustomEvent("tradeduel:active-match-changed"));
+  };
+  sync();
+ },[matchId,room?.status]);
  const [room,setRoom]=useState<any>(null); const [activity,setActivity]=useState<any>(null); const [matchIntro,setMatchIntro]=useState(true);
  const [wallet,setWallet]=useState(""); const [profiles,setProfiles]=useState<Record<string,{displayName:string;avatarDataUrl:string|null}>>({}); const [error,setError]=useState("");
  const [chat,setChat]=useState<Chat[]>([]); const [draft,setDraft]=useState(""); const [channel,setChannel]=useState<"all"|"team">("all");
