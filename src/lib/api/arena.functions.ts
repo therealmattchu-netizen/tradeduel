@@ -1124,14 +1124,20 @@ const customMatchVisibility = z.enum(["public", "private"]);
 export const listCustomMatches = createServerFn({ method: "GET" }).handler(async () => {
   const { DB } = bindings();
   if (!DB) return { matches: [] };
+  // Close abandoned open rooms so old records do not remain in the public browser.
+  // Rooms stay joinable for 30 minutes; the match duration begins only after the room fills.
+  await DB.prepare("UPDATE td_custom_matches SET status='completed',finished_at=datetime('now') WHERE status='open' AND datetime(created_at) < datetime('now','-30 minutes')").run();
   const rows = await DB.prepare(`
     SELECT m.id,m.creator_wallet,m.mode,m.visibility,m.max_players,m.duration_seconds,m.status,m.created_at,
       COUNT(mm.id) AS players_count
     FROM td_custom_matches m
     LEFT JOIN td_custom_match_members mm ON mm.match_id = m.id
-    WHERE m.status = 'open' AND m.visibility = 'public'
+    WHERE m.status = 'open'
+      AND m.visibility = 'public'
+      AND datetime(m.created_at) >= datetime('now','-30 minutes')
     GROUP BY m.id
-    ORDER BY CASE WHEN m.status='open' THEN 0 ELSE 1 END, m.created_at DESC
+    HAVING COUNT(mm.id) < m.max_players
+    ORDER BY m.created_at DESC
     LIMIT 100
   `).all<{id:string;creator_wallet:string;mode:string;visibility:string;max_players:number;duration_seconds:number;status:string;created_at:string;players_count:number}>();
   return { matches: rows.results ?? [] };
