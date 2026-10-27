@@ -1851,9 +1851,11 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
     const nowSec=Math.floor(Date.now()/1000);
     const wrappedSol="So11111111111111111111111111111111111111112";
     const errors:string[]=[];
-    for (const trackedWallet of participants) {
+    for (const ownerWallet of participants) {
+      const linked = await DB.prepare("SELECT trading_wallet FROM td_trading_wallets WHERE owner_wallet=?").bind(ownerWallet).first<{trading_wallet:string}>();
+      const trackedWallet = linked?.trading_wallet ?? ownerWallet;
       try {
-        const previous=await DB.prepare("SELECT observed_at FROM td_match_valuation_observations WHERE match_id=? AND wallet=? ORDER BY observed_at DESC LIMIT 1").bind(data.matchId,trackedWallet).first<{observed_at:number}>();
+        const previous=await DB.prepare("SELECT observed_at FROM td_match_valuation_observations WHERE match_id=? AND wallet=? ORDER BY observed_at DESC LIMIT 1").bind(data.matchId,ownerWallet).first<{observed_at:number}>();
         if(previous && nowSec-previous.observed_at<5) continue;
         const [balance,classic,token2022]=await Promise.all([
           solanaRpcCall("getBalance",[trackedWallet,{commitment:"confirmed"}]) as Promise<{value:number}>,
@@ -1896,8 +1898,8 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         const portfolioUsd=(solPrice!==undefined?balance.value/1e9*solPrice:0)+tokenValues.reduce((sum,t)=>sum+(t.valueUsd??0),0);
         const note=complete?"Live balance snapshot with current spot quotes; display estimate only, not settlement evidence.":"Partial live estimate: one or more assets lack a qualifying quote. Unpriced assets are excluded; not settlement evidence.";
         await DB.prepare("INSERT OR IGNORE INTO td_match_valuation_observations (match_id,wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?)")
-          .bind(data.matchId,trackedWallet,nowSec,balance.value/1e9,prices.size?portfolioUsd:null,JSON.stringify(tokenValues),tokenValues.length-unpriced,unpriced,complete?1:0,note).run();
-      } catch(error) { errors.push(trackedWallet.slice(0,5)+": "+(error instanceof Error?error.message:"refresh failed")); }
+          .bind(data.matchId,ownerWallet,nowSec,balance.value/1e9,prices.size?portfolioUsd:null,JSON.stringify(tokenValues),tokenValues.length-unpriced,unpriced,complete?1:0,note).run();
+      } catch(error) { errors.push(ownerWallet.slice(0,5)+": "+(error instanceof Error?error.message:"refresh failed")); }
     }
     const rows=await DB.prepare("SELECT wallet,observed_at,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note FROM td_match_valuation_observations WHERE match_id=? ORDER BY observed_at DESC LIMIT 500").bind(data.matchId).all<{wallet:string;observed_at:number;portfolio_usd:number|null;token_balances_json:string;priced_mints:number;unpriced_mints:number;complete:number;integrity_note:string}>();
     return {matchId:data.matchId,updatedAt:new Date().toISOString(),errors,valuationObservations:(rows.results??[]).map(row=>({...row,complete:Boolean(row.complete),tokenBalances:JSON.parse(row.token_balances_json||"[]")}))};
