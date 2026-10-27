@@ -1248,7 +1248,7 @@ export const sendMatchChatMessage = createServerFn({ method: "POST" })
   });
 
 
-const customMatchMode = z.enum(["head_to_head", "head_to_head_percentage", "duo", "group"]);
+const customMatchMode = z.enum(["head_to_head_percentage"]);
 const customMatchVisibility = z.enum(["public", "private"]);
 
 /** Public/private room browser. Private room passwords are never returned to clients. */
@@ -1355,9 +1355,8 @@ export const createCustomMatch = createServerFn({ method: "POST" })
   }))
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
-    const expected = (data.mode === "head_to_head" || data.mode === "head_to_head_percentage") ? 2 : data.mode === "duo" ? 4 : data.maxPlayers;
-    if (data.maxPlayers !== expected || (data.mode === "group" && ![6,8].includes(data.maxPlayers))) {
-      throw new Error("Invalid player limit for the selected match mode.");
+    if (data.mode !== "head_to_head_percentage" || data.maxPlayers !== 2) {
+      throw new Error("TradeDuel currently supports Classic percentage 1v1 only.");
     }
     const password = data.password?.trim() ?? "";
     if (data.visibility === "private" && password.length < 4) throw new Error("Private matches need a password of at least 4 characters.");
@@ -1382,6 +1381,7 @@ export const joinCustomMatch = createServerFn({ method: "POST" })
     if (!match) throw new Error("This match does not exist.");
     const existing = await DB.prepare("SELECT team_number FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(match.id,wallet).first<{team_number:number}>();
     if (existing) return { matchId:match.id, team:existing.team_number, mode:match.mode, visibility:match.visibility, maxPlayers:match.max_players, durationSeconds:match.duration_seconds, status:match.status, message:"Already a member of this match." };
+    if (match.mode !== "head_to_head_percentage" || match.max_players !== 2) throw new Error("Only Classic percentage 1v1 matches are currently available.");
     if (match.status !== "open") throw new Error("This match is no longer open for new players.");
     if (match.visibility === "private") {
       const provided = data.password?.trim() ?? "";
