@@ -23,7 +23,7 @@ const questions = [
 
 function FAQ() {
   return <SiteShell active="faq">
-    <PageHero eyebrow="HELP / FAQ" title="Good questions." accent="Clear answers." description="Wallets, live matches, scoring, and what to expect when you enter the arena." />
+    <PageHero variant="faq" eyebrow="HELP / FAQ" title="Good questions." accent="Clear answers." description="Wallets, live matches, scoring, and what to expect when you enter the arena." />
     <section className="td-faq-list">{questions.map(([q, a], i) => <details className="td-faq-item" key={q}><summary><span className="td-faq-number">{String(i + 1).padStart(2, "0")}</span><span>{q}</span><span className="td-faq-plus">+</span></summary><p>{a}</p></details>)}</section>
     <section className="td-faq-bottom"><p><a href="/elo">Explore ELO, match durations, and formats ↗</a></p><p className="td-overline">BUILT AROUND TRUST</p><h2>Clear rules.<br />Verifiable results.</h2><p>Wallet safety comes first. Competitive results should only count when the evidence and rules can support them.</p></section>
   </SiteShell>;
