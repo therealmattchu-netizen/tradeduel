@@ -26,9 +26,11 @@ type AppEnv = {
   APP_SLUG?: string;
   // Explicit wallet-signing domain per deployment (preview and production differ).
   TRADEDUEL_WALLET_DOMAIN?: string;
-  // Comma-separated provider URLs; configure a dedicated RPC endpoint for production.
+  // Dedicated RPC URLs, configured as server-side Cloudflare secrets/vars.
   SOLANA_RPC_URL?: string;
   SOLANA_RPC_URLS?: string;
+  // Optional Helius API key; never expose it to client code.
+  HELIUS_API_KEY?: string;
 };
 
 export function bindings(): AppEnv {
