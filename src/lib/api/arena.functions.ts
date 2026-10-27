@@ -2018,14 +2018,14 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         const mints=[...new Set([wrappedSol,...tokenBalances.map(t=>t.mint)])].slice(0,30);
         type Pair={baseToken?:{address?:string;name?:string;symbol?:string};quoteToken?:{address?:string;name?:string;symbol?:string};priceUsd?:string;priceNative?:string;liquidity?:{usd?:number};marketCap?:number;fdv?:number;url?:string};
         let pairs:Pair[]=[];
-        try { const response=await fetch("https://api.dexscreener.com/tokens/v1/solana/"+mints.join(","),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)}); if(response.ok)pairs=await response.json() as Pair[]; } catch {}
+        try { const response=await fetch("https://api.dexscreener.com/tokens/v1/solana/"+mints.join(","),{headers:{accept:"application/json"},signal:AbortSignal.timeout(5000)}); if(response.ok)pairs=await response.json() as Pair[]; } catch {}
         const prices=new Map<string,number>(),liquidity=new Map<string,number>(),caps=new Map<string,number>(),names=new Map<string,{name:string|null;symbol:string|null;pairUrl:string|null}>();
         for(const pair of pairs){const mint=pair.baseToken?.address,price=Number(pair.priceUsd),liq=Number(pair.liquidity?.usd??0);if(mint&&price>0&&Number.isFinite(price)&&liq>=25&&liq>(liquidity.get(mint)??0)){prices.set(mint,price);liquidity.set(mint,liq);const cap=Number(pair.marketCap??pair.fdv??0);if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);names.set(mint,{name:pair.baseToken?.name??null,symbol:pair.baseToken?.symbol??null,pairUrl:pair.url??null});}}
         const missing=tokenBalances.map(t=>t.mint).filter(mint=>!prices.has(mint)).slice(0,8);
          // The batch endpoint can omit newly launched Pump.fun tokens. Ask DexScreener's
          // per-token endpoint before using the much rougher market-cap/1B display estimate.
          await Promise.all(missing.map(async mint=>{try{
-           const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+encodeURIComponent(mint),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});
+           const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+encodeURIComponent(mint),{headers:{accept:"application/json"},signal:AbortSignal.timeout(5000)});
            if(!response.ok)return;
            const body=await response.json() as {pairs?:Array<Pair>};
            const pair=(body.pairs??[]).filter(p=>(p.baseToken?.address===mint||p.quoteToken?.address===mint)&&Number(p.priceUsd)>0&&Number(p.liquidity?.usd??0)>=25)
@@ -2045,11 +2045,20 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
            }
          }catch{}}));
          const stillMissing=missing.filter(mint=>!prices.has(mint));
-        type PumpCoin={name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string};
+        type PumpCoin={name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string;virtual_sol_reserves?:number|string;virtual_token_reserves?:number|string};
         await Promise.all(stillMissing.map(async mint=>{try{
           let coin:PumpCoin|undefined;
           for(const endpoint of ["https://frontend-api-v3.pump.fun/coins-v2/"+encodeURIComponent(mint),"https://frontend-api-v3.pump.fun/coins/"+encodeURIComponent(mint)+"?sync=true"]){
-            try{const response=await fetch(endpoint,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});if(response.ok){coin=await response.json() as PumpCoin;break;}}catch{}
+            try{
+              const response=await fetch(endpoint,{headers:{accept:"application/json"},signal:AbortSignal.timeout(5000)});
+              if(!response.ok)continue;
+              const candidate=await response.json() as PumpCoin;
+              const candidateCap=Number(candidate.usd_market_cap??candidate.market_cap_usd??candidate.market_cap);
+              const candidatePrice=Number(candidate.price_usd);
+              // A successful HTTP response can still lack quote fields. Try the
+              // next known endpoint unless this response contains usable coin data.
+              if((candidatePrice>0&&Number.isFinite(candidatePrice))||(candidateCap>0&&Number.isFinite(candidateCap))||candidate.name||candidate.symbol||candidate.virtual_sol_reserves||candidate.virtual_token_reserves){coin=candidate;break;}
+            }catch{}
           }
           if(!coin)return;
           const cap=Number(coin.usd_market_cap??coin.market_cap_usd??coin.market_cap);
@@ -2060,7 +2069,7 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
           else if(cap>0&&Number.isFinite(cap))prices.set(mint,cap/1_000_000_000);
         }catch{}}));
         if(!prices.has(wrappedSol)){try{
-          const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+wrappedSol,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});
+          const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+wrappedSol,{headers:{accept:"application/json"},signal:AbortSignal.timeout(5000)});
           if(response.ok){const body=await response.json() as {pairs?:Array<Pair&{quoteToken?:{address?:string};priceNative?:string}>};
             const liquid=(body.pairs??[]).filter(p=>Number(p.liquidity?.usd??0)>=100);
             const direct=liquid.filter(p=>p.baseToken?.address===wrappedSol&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];
