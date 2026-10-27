@@ -45,7 +45,7 @@ function CustomLiveMatch(){
  const scored=useMemo(()=>members.map(m=>{
   const startSec=room?.startedAt?Math.floor(new Date(room.startedAt).getTime()/1000):null;
   const endSec=room?.endsAt?Math.floor(new Date(room.endsAt).getTime()/1000):null;
-  const playerObservations=observations.filter(o=>o.wallet===m.wallet&&o.complete&&o.portfolio_usd!==null&&Number.isFinite(o.portfolio_usd)).sort((a,b)=>a.observed_at-b.observed_at);
+  const playerObservations=observations.filter(o=>o.wallet===m.wallet&&Array.isArray(o.tokenBalances)).sort((a,b)=>a.observed_at-b.observed_at);
   const latestObservation=playerObservations.filter(o=>(startSec===null||o.observed_at>=startSec)&&(endSec===null||o.observed_at<=endSec)).at(-1);
   const latestTokens=latestObservation?.tokenBalances??[];
   const solMint="So11111111111111111111111111111111111111112";
