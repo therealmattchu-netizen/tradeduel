@@ -48,7 +48,7 @@ function CustomLiveMatch(){
   const playerObservations=observations.filter(o=>o.wallet===m.wallet&&Array.isArray(o.tokenBalances)).sort((a,b)=>a.observed_at-b.observed_at);
   const eligibleObservations=playerObservations.filter(o=>(startSec===null||o.observed_at>=startSec)&&(endSec===null||o.observed_at<=endSec));
   // Keep the last known portfolio mark visible when a quote provider misses one poll.
-  const latestObservation=eligibleObservations.filter(o=>typeof o.portfolio_usd==="number").at(-1) ?? eligibleObservations.at(-1);
+  const latestObservation=eligibleObservations.filter(o=>typeof o.portfolio_usd==="number").sort((a,b)=>b.observed_at-a.observed_at)[0] ?? [...eligibleObservations].sort((a,b)=>b.observed_at-a.observed_at)[0];
   const latestTokens=latestObservation?.tokenBalances??[];
   const solMint="So11111111111111111111111111111111111111112";
   const solPrice=latestTokens.find(t=>t.mint===solMint)?.priceUsd??null;
@@ -109,7 +109,7 @@ function CustomLiveMatch(){
   // buy lots contribute realized proceeds or open-position value to this score.
   const startValuation=(activity?.valuations??[]).find((row:any)=>row.wallet===m.wallet&&row.phase==="start"&&row.complete&&row.portfolio_usd!==null&&startSec!==null&&Math.abs(row.observed_at-startSec)<=120);
   const eligiblePricedObservations=eligibleObservations.filter(o=>typeof o.portfolio_usd==="number"&&o.portfolio_usd>0);
-  const latestPortfolioObservation=eligiblePricedObservations.at(-1);
+  const latestPortfolioObservation=eligiblePricedObservations.sort((a,b)=>b.observed_at-a.observed_at)[0];
   const currentPortfolioFresh=latestPortfolioObservation!==undefined&&Math.floor(Date.now()/1000)-latestPortfolioObservation.observed_at<=180;
   const currentPortfolio=currentPortfolioFresh?latestPortfolioObservation?.portfolio_usd??null:null;
   // Unpriced eligible positions are conservatively marked at cost basis above.
