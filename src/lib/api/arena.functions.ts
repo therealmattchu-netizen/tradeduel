@@ -886,19 +886,23 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       try {
         type PumpCoin = {
           name?: string; symbol?: string; usd_market_cap?: number | string;
-          market_cap_usd?: number | string; market_cap?: number | string;
+          market_cap_usd?: number | string; market_cap?: number | string; market_cap_quote?: number | string;
           total_supply?: number | string; total_supply_str?: string;
           circulating_supply?: number | string; circulating_supply_str?: string;
           price_usd?: number | string; priceUsd?: number | string;
+          virtual_sol_reserves?: number | string; virtual_token_reserves?: number | string;
+          real_sol_reserves?: number | string; real_token_reserves?: number | string;
           decimals?: number | string; complete?: boolean;
-          coin?: PumpCoin; data?: PumpCoin;
+          coin?: PumpCoin; data?: PumpCoin; result?: PumpCoin;
         };
         let coin: PumpCoin | null = null;
-        // Pump.fun has changed its public response shape and hostnames more than
-        // once. Try compatible public endpoints and unwrap common envelope shapes.
+        // The old coins-v2 path is not consistently available. Try the documented
+        // web-app coin lookup both with and without sync, then unwrap array/envelope
+        // responses; this fallback is display-only, never settlement evidence.
         const endpoints = [
-          "https://frontend-api-v3.pump.fun/coins-v2/" + encodeURIComponent(mint),
+          "https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint),
           "https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
+          "https://frontend-api-v3.pump.fun/coins-v2/" + encodeURIComponent(mint),
           "https://frontend-api.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
         ];
         for (const endpoint of endpoints) {
@@ -908,32 +912,68 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
               signal: AbortSignal.timeout(4500),
             });
             if (!response.ok) continue;
-            const body = await response.json() as PumpCoin;
-            const candidate = body?.coin ?? body?.data ?? body;
-            if (candidate && typeof candidate === "object") {
+            const raw = await response.json() as PumpCoin | PumpCoin[];
+            const body = Array.isArray(raw) ? raw[0] : raw;
+            const candidate = body?.coin ?? body?.data ?? body?.result ?? body;
+            if (candidate && typeof candidate === "object" && !Array.isArray(candidate)) {
               coin = candidate;
-              if (candidate.name || candidate.symbol || candidate.usd_market_cap || candidate.market_cap_usd || candidate.price_usd || candidate.priceUsd) break;
+              if (candidate.name || candidate.symbol || candidate.usd_market_cap || candidate.market_cap_usd || candidate.market_cap || candidate.price_usd || candidate.priceUsd || candidate.virtual_sol_reserves) break;
             }
-          } catch { /* Try the compatibility endpoint before leaving the mint unpriced. */ }
+          } catch { /* Try the next public quote endpoint. */ }
         }
         if (!coin) return;
-        const cap = Number(coin.usd_market_cap ?? coin.market_cap_usd ?? coin.market_cap);
-        if (Number.isFinite(cap) && cap > 0 && !marketCaps.has(mint)) marketCaps.set(mint, cap);
+        const usdCap = Number(coin.usd_market_cap ?? coin.market_cap_usd);
+        const quoteCap = Number(coin.market_cap_quote ?? coin.market_cap);
+        const directPrice = Number(coin.price_usd ?? coin.priceUsd);
+        const supply = Number(coin.circulating_supply ?? coin.circulating_supply_str ?? coin.total_supply ?? coin.total_supply_str ?? 1_000_000_000);
+        const safeSupply = Number.isFinite(supply) && supply > 0 ? supply : 1_000_000_000;
+        let cap = Number.isFinite(usdCap) && usdCap > 0 ? usdCap : null;
+        // Some frontend payloads expose market_cap in SOL rather than USD.
+        if (cap === null && Number.isFinite(quoteCap) && quoteCap > 0) {
+          let solUsd = prices.get("So11111111111111111111111111111111111111112") ?? null;
+          if (!solUsd) {
+            try {
+              const solResponse = await fetch("https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112", {headers:{accept:"application/json"},signal:AbortSignal.timeout(3500)});
+              if (solResponse.ok) {
+                const solBody = await solResponse.json() as {pairs?:Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number}}>} ;
+                const solPair = (solBody.pairs??[]).filter(p=>p.baseToken?.address==="So11111111111111111111111111111111111111112"&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];
+                if (solPair) solUsd = Number(solPair.priceUsd);
+              }
+            } catch {}
+          }
+          if (solUsd) cap = quoteCap * solUsd;
+        }
+        if (cap !== null && !marketCaps.has(mint)) marketCaps.set(mint, cap);
         if (!tokenNames.has(mint) && (coin.name || coin.symbol)) {
           tokenNames.set(mint, { name: coin.name ?? null, symbol: coin.symbol ?? null, pairUrl: "https://pump.fun/coin/" + mint });
         }
         if (!prices.has(mint)) {
-          const directPrice = Number(coin.price_usd ?? coin.priceUsd);
           if (Number.isFinite(directPrice) && directPrice > 0) {
             prices.set(mint, directPrice);
-          } else if (Number.isFinite(cap) && cap > 0) {
-            // Pump.fun launches use a 1B-token supply. Market cap / supply gives a
-            // provisional live display quote when no liquid DEX pool is indexed.
-            // It is never accepted as official settlement pricing.
-            const supply = Number(coin.circulating_supply ?? coin.circulating_supply_str ?? coin.total_supply ?? coin.total_supply_str ?? 1_000_000_000);
-            const safeSupply = Number.isFinite(supply) && supply > 0 ? supply : 1_000_000_000;
+          } else if (cap !== null && cap > 0) {
+            // Pump.fun's standard mint supply is 1B; market-cap marks are a
+            // provisional display estimate only, not verified execution pricing.
             const provisionalPrice = cap / safeSupply;
             if (Number.isFinite(provisionalPrice) && provisionalPrice > 0) prices.set(mint, provisionalPrice);
+          } else {
+            // Bonding-curve reserve ratio: virtual SOL is lamports and virtual
+            // token reserves are base units (Pump.fun tokens use 6 decimals).
+            const solReserves = Number(coin.virtual_sol_reserves ?? coin.real_sol_reserves);
+            const tokenReserves = Number(coin.virtual_token_reserves ?? coin.real_token_reserves);
+            let solUsd = prices.get("So11111111111111111111111111111111111111112") ?? null;
+            if (!solUsd) {
+              try {
+                const solResponse = await fetch("https://api.dexscreener.com/latest/dex/tokens/So11111111111111111111111111111111111111112", {headers:{accept:"application/json"},signal:AbortSignal.timeout(3500)});
+                if (solResponse.ok) {
+                  const solBody = await solResponse.json() as {pairs?:Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number}}>} ;
+                  const solPair = (solBody.pairs??[]).filter(p=>p.baseToken?.address==="So11111111111111111111111111111111111111112"&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];
+                  if (solPair) solUsd = Number(solPair.priceUsd);
+                }
+              } catch {}
+            }
+            const reservePrice = solReserves > 0 && tokenReserves > 0 && solUsd
+              ? (solReserves / 1e9) / (tokenReserves / 1e6) * solUsd : null;
+            if (reservePrice !== null && Number.isFinite(reservePrice) && reservePrice > 0) prices.set(mint, reservePrice);
           }
         }
       } catch { /* Keep unknown bonding-curve tokens pending instead of inventing a quote. */ }
