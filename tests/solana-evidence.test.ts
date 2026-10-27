@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { summarizeEstimatedRealizedPnl } from "../src/lib/solana-evidence";
 import { aggregateRawTokenBalances, buildAccountingLedgerSummary, buildProtocolSwapCandidate, classifySwapEvidence, classifyTransferFlow, decodePumpFunInstruction, identifySwapProtocol, nativeBalanceAccounting, resolveInstructionProgramId, selectHistoricalCandle, tokenBalanceDeltas } from "../src/lib/solana-evidence";
 
 const wallet = "Wallet111111111111111111111111111111111";
@@ -117,5 +118,52 @@ describe("Solana evidence helpers", () => {
   test("never promotes a recognized swap program to a confirmed fill", () => {
     expect(classifySwapEvidence({ success: true, recognizedProgram: true, hasTokenDelta: true, hasExternalFlow: false, hasLifecycleInstruction: false })).toEqual({ classification: "swap_candidate", confidence: "low", canCountAsFill: false });
     expect(classifySwapEvidence({ success: true, recognizedProgram: true, hasTokenDelta: true, hasExternalFlow: true, hasLifecycleInstruction: false }).classification).toBe("swap_or_flow_ambiguous");
+  });
+});
+
+describe("estimated realized P&L from buy/sell candidates", () => {
+  const wallet = "Wallet111111111111111111111111111111111";
+  const buy = (overrides: Record<string, unknown> = {}) => ({
+    wallet, token_mint: "mintA", token_delta: 10, sol_delta_net: 1, direction: "buy_candidate",
+    block_time: 100, signature: "buy-1", ...overrides,
+  });
+  const sell = (overrides: Record<string, unknown> = {}) => ({
+    wallet, token_mint: "mintA", token_delta: -10, sol_delta_net: 1.3, direction: "sell_candidate",
+    block_time: 200, signature: "sell-1", ...overrides,
+  });
+
+  test("records realized profit when a holding is sold above cost basis", () => {
+    const [result] = summarizeEstimatedRealizedPnl([sell(), buy()] as any);
+    expect(result.realizedPnlSol).toBeCloseTo(0.3);
+    expect(result.matchedSellTokens).toBe(10);
+    expect(result.unmatchedSellTokens).toBe(0);
+    expect(result.status).toBe("provisional_candidate_estimate");
+  });
+
+  test("records realized loss when a holding is sold below cost basis", () => {
+    const [result] = summarizeEstimatedRealizedPnl([sell({sol_delta_net:0.7}), buy()] as any);
+    expect(result.realizedPnlSol).toBeCloseTo(-0.3);
+  });
+
+  test("handles partial sells and preserves unsold cost basis", () => {
+    const [result] = summarizeEstimatedRealizedPnl([buy(), sell({token_delta:-4, sol_delta_net:0.6})] as any);
+    expect(result.realizedPnlSol).toBeCloseTo(0.2);
+    expect(result.matchedSellTokens).toBe(4);
+    expect(result.unmatchedSellTokens).toBe(0);
+  });
+
+  test("does not assume profit for sells without a tracked buy", () => {
+    const [result] = summarizeEstimatedRealizedPnl([sell()] as any);
+    expect(result.realizedPnlSol).toBe(0);
+    expect(result.unmatchedSellTokens).toBe(10);
+    expect(result.blockers).toContain("sell_quantity_exceeds_tracked_buy_lots");
+  });
+
+  test("keeps wallet and token cost bases separate", () => {
+    const [result] = summarizeEstimatedRealizedPnl([
+      buy({wallet:"wallet-1"}), sell({wallet:"wallet-2"}),
+    ] as any);
+    expect(result.wallet).toBe("wallet-1");
+    expect(result.realizedPnlSol).toBe(0);
   });
 });
