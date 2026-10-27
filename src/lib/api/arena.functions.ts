@@ -862,13 +862,23 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
           "https://frontend-api-v3.pump.fun/coins-v2/" + encodeURIComponent(mint),
           "https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
         ];
-        let coin: {
+        type PumpCoin = {
           name?: string; symbol?: string; usd_market_cap?: number | string;
           market_cap_usd?: number | string; market_cap?: number | string;
           total_supply?: number | string; total_supply_str?: string;
-          circulating_supply_str?: string; price_usd?: number | string;
+          circulating_supply?: number | string; circulating_supply_str?: string;
+          price_usd?: number | string; priceUsd?: number | string;
           decimals?: number | string; complete?: boolean;
-        } | null = null;
+          coin?: PumpCoin; data?: PumpCoin;
+        };
+        let coin: PumpCoin | null = null;
+        // Pump.fun has changed its public response shape and hostnames more than
+        // once. Try compatible public endpoints and unwrap common envelope shapes.
+        const endpoints = [
+          "https://frontend-api-v3.pump.fun/coins-v2/" + encodeURIComponent(mint),
+          "https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
+          "https://frontend-api.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
+        ];
         for (const endpoint of endpoints) {
           try {
             const response = await fetch(endpoint, {
@@ -876,14 +886,12 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
               signal: AbortSignal.timeout(4500),
             });
             if (!response.ok) continue;
-            const body = await response.json() as {
-              name?: string; symbol?: string; usd_market_cap?: number | string;
-              market_cap_usd?: number | string; market_cap?: number | string;
-              total_supply?: number | string; total_supply_str?: string;
-              circulating_supply_str?: string; price_usd?: number | string;
-              decimals?: number | string; complete?: boolean;
-            };
-            if (body && typeof body === "object") { coin = body; break; }
+            const body = await response.json() as PumpCoin;
+            const candidate = body?.coin ?? body?.data ?? body;
+            if (candidate && typeof candidate === "object") {
+              coin = candidate;
+              if (candidate.name || candidate.symbol || candidate.usd_market_cap || candidate.market_cap_usd || candidate.price_usd || candidate.priceUsd) break;
+            }
           } catch { /* Try the compatibility endpoint before leaving the mint unpriced. */ }
         }
         if (!coin) return;
@@ -893,14 +901,16 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
           tokenNames.set(mint, { name: coin.name ?? null, symbol: coin.symbol ?? null, pairUrl: "https://pump.fun/coin/" + mint });
         }
         if (!prices.has(mint)) {
-          const directPrice = Number(coin.price_usd);
+          const directPrice = Number(coin.price_usd ?? coin.priceUsd);
           if (Number.isFinite(directPrice) && directPrice > 0) {
             prices.set(mint, directPrice);
           } else if (Number.isFinite(cap) && cap > 0) {
             // Pump.fun launches use a 1B-token supply. Market cap / supply gives a
             // provisional live display quote when no liquid DEX pool is indexed.
             // It is never accepted as official settlement pricing.
-            const provisionalPrice = cap / 1_000_000_000;
+            const supply = Number(coin.circulating_supply ?? coin.circulating_supply_str ?? coin.total_supply ?? coin.total_supply_str ?? 1_000_000_000);
+            const safeSupply = Number.isFinite(supply) && supply > 0 ? supply : 1_000_000_000;
+            const provisionalPrice = cap / safeSupply;
             if (Number.isFinite(provisionalPrice) && provisionalPrice > 0) prices.set(mint, provisionalPrice);
           }
         }
