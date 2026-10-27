@@ -583,7 +583,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     // Always ingest the newest signatures on every room sync, even while the
     // historical cursor is still paging backwards. Previously, recent discovery
     // only ran after history exhaustion, delaying live-match activity for large wallets.
-    const recent = await rpcCall("getSignaturesForAddress",[trackedWallet,{limit:25,commitment:"confirmed"}]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
+    const recent = await rpcCall("getSignaturesForAddress",[trackedWallet,{limit:10,commitment:"confirmed"}]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
     for (const sig of recent) {
       if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
         await DB.prepare("INSERT OR IGNORE INTO td_match_index_queue (match_id,wallet,signature,slot,block_time,tx_error_json) VALUES (?,?,?,?,?,?)")
@@ -595,7 +595,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     const lastHistoricalCheck = state?.last_checked_at ? Date.parse(state.last_checked_at.replace(" ","T")+"Z") : 0;
     const historicalCheckDue = !state || !state.last_checked_at || !Number.isFinite(lastHistoricalCheck) || Date.now()-lastHistoricalCheck>=30000;
     if (historicalCheckDue && (!state || !state.exhausted)) {
-      const options:Record<string,unknown> = {limit:100,commitment:"confirmed"};
+      const options:Record<string,unknown> = {limit:30,commitment:"confirmed"};
       if (state?.before_signature) options.before = state.before_signature;
       const page = await rpcCall("getSignaturesForAddress",[trackedWallet,options]) as Array<{signature:string;slot:number;blockTime:number|null;err:unknown}>;
       let exhausted = page.length === 0;
@@ -618,7 +618,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   // Quarantine repeatedly unavailable transactions rather than retrying them on every room poll.
   await DB.prepare("UPDATE td_match_index_queue SET status='skipped',last_error=COALESCE(last_error,'retry_limit_reached'),updated_at=datetime('now') WHERE match_id=? AND wallet=? AND status='retry' AND attempts>=8")
     .bind(match.id,ownerWallet).run();
-  const pending = await DB.prepare("SELECT signature,slot,block_time,tx_error_json FROM td_match_index_queue WHERE match_id = ? AND wallet = ? AND (status='pending' OR (status='retry' AND attempts<8 AND updated_at<=datetime('now','-2 minutes'))) ORDER BY block_time DESC,id DESC LIMIT 3")
+  const pending = await DB.prepare("SELECT signature,slot,block_time,tx_error_json FROM td_match_index_queue WHERE match_id = ? AND wallet = ? AND (status='pending' OR (status='retry' AND attempts<8 AND updated_at<=datetime('now','-2 minutes'))) ORDER BY block_time DESC,id DESC LIMIT 1")
     .bind(match.id,ownerWallet).all<{signature:string;slot:number;block_time:number|null;tx_error_json:string|null}>();
   let walletIndexed = 0;
   for (const sig of pending.results ?? []) {
