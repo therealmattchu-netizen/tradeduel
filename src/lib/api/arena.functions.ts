@@ -303,6 +303,63 @@ async function solanaRpcCall(method: string, params: unknown[]) {
   throw new Error("Solana mainnet RPC is temporarily unavailable across all configured providers. Configure a dedicated Solana RPC URL for production and retry.");
 }
 
+/** Lightweight, read-only portfolio estimate for wallet-value matchmaking.
+ * Matchmaking is disabled for wallets with unpriced holdings; estimates are not official P&L. */
+export const getWalletPortfolioEstimate = createServerFn({ method: "POST" })
+  .validator(z.object({ wallet: z.string().regex(WALLET_RE) }))
+  .handler(async ({ data }) => {
+    const wallet = data.wallet;
+    const call = solanaRpcCall;
+    const programs = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
+    const [balance, ...accountResults] = await Promise.all([
+      call("getBalance", [wallet, { commitment: "confirmed" }]) as Promise<{value:number}>,
+      ...programs.map(program => call("getTokenAccountsByOwner", [wallet, {programId:program}, {encoding:"jsonParsed", commitment:"confirmed"}]).catch(() => ({value:[]})) as Promise<ParsedTokenAccounts>),
+    ]);
+    const holdings = new Map<string, number>();
+    accountResults.forEach(result => {
+      for (const account of (result as ParsedTokenAccounts).value ?? []) {
+        const info = account.account?.data?.parsed?.info;
+        const mint = info?.mint;
+        const amount = Number(info?.tokenAmount?.uiAmount ?? 0);
+        if (mint && Number.isFinite(amount) && amount > 0) holdings.set(mint, (holdings.get(mint) ?? 0) + amount);
+      }
+    });
+    const mints = [...holdings.keys()].slice(0, 30);
+    const prices = new Map<string, number>();
+    let solPrice: number | null = null;
+    const requests: Promise<void>[] = [];
+    if (mints.length) requests.push((async()=>{try {
+      const response = await fetch("https://api.dexscreener.com/tokens/v1/solana/" + mints.join(","), {headers:{accept:"application/json"}, signal:AbortSignal.timeout(6000)});
+      if (!response.ok) return;
+      const pairs = await response.json() as Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number}}>;
+      for (const pair of pairs ?? []) {
+        const mint = pair.baseToken?.address, price = Number(pair.priceUsd);
+        if (!mint || !holdings.has(mint) || !Number.isFinite(price) || price <= 0) continue;
+        const current = prices.get(mint);
+        if (current === undefined || Number(pair.liquidity?.usd ?? 0) > 0) prices.set(mint, price);
+      }
+    } catch { /* Unknown token prices make this estimate ineligible for strict matching. */ }})());
+    requests.push((async()=>{try {
+      const response = await fetch("https://api.dexscreener.com/tokens/v1/solana/So11111111111111111111111111111111111111112", {headers:{accept:"application/json"}, signal:AbortSignal.timeout(4000)});
+      if (!response.ok) return;
+      const pairs = await response.json() as Array<{baseToken?:{address?:string};priceUsd?:string;liquidity?:{usd?:number}}>;
+      const best = (pairs ?? []).filter(p=>p.baseToken?.address==="So11111111111111111111111111111111111111112"&&Number(p.priceUsd)>0).sort((x,y)=>Number(y.liquidity?.usd??0)-Number(x.liquidity?.usd??0))[0];
+      if (best) solPrice = Number(best.priceUsd);
+    } catch { /* no SOL quote */ }})());
+    await Promise.all(requests);
+    const unpricedMints = mints.filter(mint => !prices.has(mint));
+    const tokenValueUsd = [...holdings.entries()].reduce((sum,[mint,amount])=>sum+amount*(prices.get(mint)??0),0);
+    const balanceSol = balance.value / 1_000_000_000;
+    const complete = unpricedMints.length === 0 && (balanceSol === 0 || solPrice !== null);
+    return {
+      wallet, balanceSol, solPriceUsd: solPrice, tokenValueUsd,
+      portfolioValueUsd: complete ? balanceSol * (solPrice ?? 0) + tokenValueUsd : null,
+      pricedTokens: prices.size, tokenCount: mints.length, unpricedTokens: unpricedMints.length,
+      complete, updatedAt: new Date().toISOString(),
+      disclaimer: "Estimated current holdings using public RPC balances and DexScreener spot prices. Not a cost basis, verified P&L, or official match result."
+    };
+  });
+
 export const trackPublicWallet = createServerFn({ method: "POST" })
   .validator(z.object({ wallet: z.string().regex(WALLET_RE) }))
   .handler(async ({ data }) => {
