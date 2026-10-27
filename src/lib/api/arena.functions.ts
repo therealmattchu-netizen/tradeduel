@@ -1466,10 +1466,10 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { DB, wallet } = await requireSession(data.token);
     const match = await DB.prepare(
-      "SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds FROM td_custom_matches WHERE id=?"
+      "SELECT id,status,started_at,ends_at,mode,max_players,duration_seconds,surrendered_by FROM td_custom_matches WHERE id=?"
     ).bind(data.matchId).first<{
       id: string; status: string; started_at: string | null; ends_at: string | null;
-      mode: string; max_players: number; duration_seconds: number;
+      mode: string; max_players: number; duration_seconds: number; surrendered_by: string | null;
     }>();
     if (!match) throw new Error("This match does not exist.");
     const member = await DB.prepare(
@@ -1504,6 +1504,7 @@ export const getCustomMatchStatus = createServerFn({ method: "POST" })
     return {
       customRoom: {
         status: currentStatus,
+        surrenderedBy: match.surrendered_by,
         startedAt,
         endsAt,
         durationSeconds: match.duration_seconds,
