@@ -814,40 +814,45 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       .slice(0, 8);
     await Promise.all(pumpFallbackMints.map(async mint => {
       try {
-        const response = await fetch("https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true", {
-          headers: { accept: "application/json" },
-          signal: AbortSignal.timeout(4500),
-        });
-        if (!response.ok) return;
-        const coin = await response.json() as {
+        // The current Pump.fun frontend API exposes coin metadata at /coins-v2/{mint}.
+        // Keep the older /coins/{mint} path as a compatibility fallback because the
+        // frontend API is undocumented and can vary across deployments.
+        const endpoints = [
+          "https://frontend-api-v3.pump.fun/coins-v2/" + encodeURIComponent(mint),
+          "https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
+        ];
+        let coin: {
           name?: string; symbol?: string; usd_market_cap?: number | string;
           market_cap_usd?: number | string; market_cap?: number | string;
           total_supply?: number | string; total_supply_str?: string;
           circulating_supply_str?: string; price_usd?: number | string;
           decimals?: number | string; complete?: boolean;
-        };
+        } | null = null;
+        for (const endpoint of endpoints) {
+          try {
+            const response = await fetch(endpoint, {
+              headers: { accept: "application/json" },
+              signal: AbortSignal.timeout(4500),
+            });
+            if (!response.ok) continue;
+            const body = await response.json() as typeof coin;
+            if (body && typeof body === "object") { coin = body; break; }
+          } catch { /* Try the compatibility endpoint before leaving the mint unpriced. */ }
+        }
+        if (!coin) return;
         const cap = Number(coin.usd_market_cap ?? coin.market_cap_usd ?? coin.market_cap);
         if (Number.isFinite(cap) && cap > 0 && !marketCaps.has(mint)) marketCaps.set(mint, cap);
         if (!tokenNames.has(mint) && (coin.name || coin.symbol)) {
           tokenNames.set(mint, { name: coin.name ?? null, symbol: coin.symbol ?? null, pairUrl: "https://pump.fun/coin/" + mint });
         }
-        // Derive a provisional display/live-score quote only when the API supplies
-        // a parseable supply. Pump.fun often reports raw token units (6 decimals).
         if (!prices.has(mint)) {
           const directPrice = Number(coin.price_usd);
           if (Number.isFinite(directPrice) && directPrice > 0) {
             prices.set(mint, directPrice);
           } else if (Number.isFinite(cap) && cap > 0) {
-            const rawSupply = Number(coin.circulating_supply_str ?? coin.total_supply_str ?? coin.total_supply);
-            const decimals = Number(coin.decimals ?? 6);
-            const supply = Number.isFinite(rawSupply) && rawSupply > 0
-              ? (rawSupply > 1e12 ? rawSupply / Math.pow(10, Number.isFinite(decimals) ? Math.min(18, Math.max(0, decimals)) : 6) : rawSupply)
-              : NaN;
-            const provisionalPrice = cap / supply;
-            if (Number.isFinite(provisionalPrice) && provisionalPrice > 0 && supply > 0) prices.set(mint, provisionalPrice);
-          } else if (Number.isFinite(cap) && cap > 0) {
-            // Display-only fallback for Pump.fun's standard 1B-token supply when
-            // the public coin endpoint omits supply. Never used for official settlement.
+            // Pump.fun launches use a 1B-token supply. Market cap / supply gives a
+            // provisional live display quote when no liquid DEX pool is indexed.
+            // It is never accepted as official settlement pricing.
             const provisionalPrice = cap / 1_000_000_000;
             if (Number.isFinite(provisionalPrice) && provisionalPrice > 0) prices.set(mint, provisionalPrice);
           }
