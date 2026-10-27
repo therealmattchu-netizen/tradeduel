@@ -560,11 +560,21 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   let indexed = 0;
   let indexingErrors = 0;
   if (!participants.length) participants = [...new Set([match.player_one, match.player_two].filter((address): address is string => Boolean(address)))];
-  for (const trackedWallet of participants) {
+  for (const ownerWallet of participants) {
+  // Resolve the verified execution wallet, while keeping persisted records keyed
+  // to the authenticated player wallet used by match membership and the UI.
+  let trackedWallet = ownerWallet;
+  try {
+    const linked = await DB.prepare("SELECT trading_wallet FROM td_trading_wallets WHERE owner_wallet = ?")
+      .bind(ownerWallet).first<{ trading_wallet: string }>();
+    if (linked?.trading_wallet && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(linked.trading_wallet)) trackedWallet = linked.trading_wallet;
+  } catch {
+    // Backward-compatible fallback for deployments without the wallet-link table.
+  }
   // Page signatures from a durable cursor and queue them before processing. This
   // prevents the old fixed-latest-100 scan from permanently missing older match activity.
   let state = await DB.prepare("SELECT before_signature,exhausted,last_checked_at FROM td_match_index_state WHERE match_id = ? AND wallet = ?")
-    .bind(match.id, trackedWallet).first<{before_signature:string|null;exhausted:number;last_checked_at:string|null}>();
+    .bind(match.id, ownerWallet).first<{before_signature:string|null;exhausted:number;last_checked_at:string|null}>();
   try {
     // Always ingest the newest signatures on every room sync, even while the
     // historical cursor is still paging backwards. Previously, recent discovery
@@ -573,7 +583,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     for (const sig of recent) {
       if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
         await DB.prepare("INSERT OR IGNORE INTO td_match_index_queue (match_id,wallet,signature,slot,block_time,tx_error_json) VALUES (?,?,?,?,?,?)")
-          .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
+          .bind(match.id,ownerWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
       }
     }
     // In parallel with live discovery, advance one durable historical page until
@@ -588,13 +598,13 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       for (const sig of page) {
         if (sig.blockTime !== null && sig.blockTime >= start && sig.blockTime <= end) {
           await DB.prepare("INSERT OR IGNORE INTO td_match_index_queue (match_id,wallet,signature,slot,block_time,tx_error_json) VALUES (?,?,?,?,?,?)")
-            .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
+            .bind(match.id,ownerWallet,sig.signature,sig.slot,sig.blockTime,sig.err == null ? null : JSON.stringify(sig.err)).run();
         }
         if (sig.blockTime !== null && sig.blockTime < start) exhausted = true;
       }
       const nextCursor = page.length ? page[page.length-1].signature : (state?.before_signature ?? null);
       await DB.prepare("INSERT INTO td_match_index_state (match_id,wallet,before_signature,exhausted,pages_fetched,last_checked_at) VALUES (?,?,?,?,1,datetime('now')) ON CONFLICT(match_id,wallet) DO UPDATE SET before_signature=excluded.before_signature,exhausted=excluded.exhausted,pages_fetched=td_match_index_state.pages_fetched+1,last_checked_at=datetime('now')")
-        .bind(match.id,trackedWallet,nextCursor,exhausted?1:0).run();
+        .bind(match.id,ownerWallet,nextCursor,exhausted?1:0).run();
     }
   } catch {
     // Transaction indexing must not prevent portfolio snapshots from being captured.
@@ -603,20 +613,20 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   }
   // Quarantine repeatedly unavailable transactions rather than retrying them on every room poll.
   await DB.prepare("UPDATE td_match_index_queue SET status='skipped',last_error=COALESCE(last_error,'retry_limit_reached'),updated_at=datetime('now') WHERE match_id=? AND wallet=? AND status='retry' AND attempts>=8")
-    .bind(match.id,trackedWallet).run();
+    .bind(match.id,ownerWallet).run();
   const pending = await DB.prepare("SELECT signature,slot,block_time,tx_error_json FROM td_match_index_queue WHERE match_id = ? AND wallet = ? AND (status='pending' OR (status='retry' AND attempts<8 AND updated_at<=datetime('now','-2 minutes'))) ORDER BY block_time DESC,id DESC LIMIT 3")
-    .bind(match.id,trackedWallet).all<{signature:string;slot:number;block_time:number|null;tx_error_json:string|null}>();
+    .bind(match.id,ownerWallet).all<{signature:string;slot:number;block_time:number|null;tx_error_json:string|null}>();
   let walletIndexed = 0;
   for (const sig of pending.results ?? []) {
     try {
     const exists = await DB.prepare("SELECT id FROM td_match_events WHERE match_id = ? AND signature = ?").bind(match.id,sig.signature).first<{id:number}>();
     if (exists) {
-      await DB.prepare("UPDATE td_match_index_queue SET status='processed',updated_at=datetime('now') WHERE match_id=? AND wallet=? AND signature=?").bind(match.id,trackedWallet,sig.signature).run();
+      await DB.prepare("UPDATE td_match_index_queue SET status='processed',updated_at=datetime('now') WHERE match_id=? AND wallet=? AND signature=?").bind(match.id,ownerWallet,sig.signature).run();
       continue;
     }
     const tx = await rpcCall("getTransaction",[sig.signature,{encoding:"jsonParsed",commitment:"confirmed",maxSupportedTransactionVersion:0}]) as any;
     if (!tx?.meta) {
-      await DB.prepare("UPDATE td_match_index_queue SET status='retry',attempts=attempts+1,last_error='transaction_metadata_not_available',updated_at=datetime('now') WHERE match_id=? AND wallet=? AND signature=?").bind(match.id,trackedWallet,sig.signature).run();
+      await DB.prepare("UPDATE td_match_index_queue SET status='retry',attempts=attempts+1,last_error='transaction_metadata_not_available',updated_at=datetime('now') WHERE match_id=? AND wallet=? AND signature=?").bind(match.id,ownerWallet,sig.signature).run();
       continue;
     }
     const keys = (tx.transaction?.message?.accountKeys ?? []).map((k:any)=>typeof k === "string" ? k : k.pubkey);
@@ -651,11 +661,11 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       hasLifecycleEffects,
     });
     await DB.prepare("INSERT OR IGNORE INTO td_match_accounting_ledger (match_id,wallet,signature,slot,block_time,success,fee_lamports,native_delta_lamports,native_delta_ex_fee_lamports,token_deltas_json,external_flows_json,protocols_json,evidence_level,blockers_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(match.id,trackedWallet,sig.signature,sig.slot,sig.block_time,sig.tx_error_json===null?1:0,ledger.feeLamports,ledger.nativeDeltaLamports,ledger.nativeDeltaExFeeLamports,JSON.stringify(ledger.tokenDeltas),JSON.stringify(ledger.externalFlows),JSON.stringify(ledger.protocols),ledger.evidenceLevel,JSON.stringify([...new Set([...ledger.blockers,"external_transfer_analysis_not_yet_complete"])]))
+      .bind(match.id,ownerWallet,sig.signature,sig.slot,sig.block_time,sig.tx_error_json===null?1:0,ledger.feeLamports,ledger.nativeDeltaLamports,ledger.nativeDeltaExFeeLamports,JSON.stringify(ledger.tokenDeltas),JSON.stringify(ledger.externalFlows),JSON.stringify(ledger.protocols),ledger.evidenceLevel,JSON.stringify([...new Set([...ledger.blockers,"external_transfer_analysis_not_yet_complete"])]))
       .run();
     const signatureFailed = sig.tx_error_json !== null;
     const eventType = signatureFailed ? "failed" : isBuy ? "pump_fun_buy_candidate" : isSell ? "pump_fun_sell_candidate" : pumpRelated ? "pump_fun_instruction_unclassified" : tokenDeltas.length ? "token_activity" : "sol_activity";
-    await DB.prepare("INSERT OR IGNORE INTO td_match_events (match_id,wallet,signature,block_time,slot,success,pump_fun_related,sol_delta,token_deltas_json,event_type) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(match.id,trackedWallet,sig.signature,sig.block_time,sig.slot,signatureFailed?0:1,pumpRelated?1:0,(postSol-preSol)/1e9,JSON.stringify(tokenDeltas),eventType).run();
+    await DB.prepare("INSERT OR IGNORE INTO td_match_events (match_id,wallet,signature,block_time,slot,success,pump_fun_related,sol_delta,token_deltas_json,event_type) VALUES (?,?,?,?,?,?,?,?,?,?)").bind(match.id,ownerWallet,sig.signature,sig.block_time,sig.slot,signatureFailed?0:1,pumpRelated?1:0,(postSol-preSol)/1e9,JSON.stringify(tokenDeltas),eventType).run();
     // Persist a clearly labelled swap candidate during automatic indexing. This is
     // inferred from token deltas + Pump.fun instruction logs, not a protocol fill receipt.
     if (!signatureFailed && (pumpRelated || protocols.length > 0) && tokenDeltas.length === 1) {
@@ -675,16 +685,16 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
        const solAmount = direction === "buy_candidate" ? netSolOut : direction === "sell_candidate" ? netSolIn : 0;
        const estimatedPrice = tokenAmount > 0 && solAmount > 0 ? solAmount/tokenAmount : null;
        await DB.prepare("INSERT OR IGNORE INTO td_swap_fill_candidates (match_id,wallet,signature,block_time,slot,token_mint,token_delta,sol_delta_net,estimated_token_price_sol,direction,parser,confidence,explanation) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-         .bind(match.id,trackedWallet,sig.signature,sig.block_time,sig.slot,delta.mint,Number(delta.amount),solAmount,estimatedPrice,direction,pumpRelated?"pump_instruction_log_plus_wallet_balance_delta":"recognized_swap_protocol_plus_wallet_balance_delta","low","Candidate derived from a recognized swap protocol and one wallet token balance delta. SOL movement is a rough net-wallet estimate; bundled transfers, USDC/other quote assets, rent, and program-specific fill details may remain unresolved. This is not a verified fill or official P&L.")
+         .bind(match.id,ownerWallet,sig.signature,sig.block_time,sig.slot,delta.mint,Number(delta.amount),solAmount,estimatedPrice,direction,pumpRelated?"pump_instruction_log_plus_wallet_balance_delta":"recognized_swap_protocol_plus_wallet_balance_delta","low","Candidate derived from a recognized swap protocol and one wallet token balance delta. SOL movement is a rough net-wallet estimate; bundled transfers, USDC/other quote assets, rent, and program-specific fill details may remain unresolved. This is not a verified fill or official P&L.")
          .run();
      }
     await DB.prepare("UPDATE td_match_index_queue SET status='processed',attempts=attempts+1,last_error=NULL,updated_at=datetime('now') WHERE match_id=? AND wallet=? AND signature=?")
-      .bind(match.id,trackedWallet,sig.signature).run();
+      .bind(match.id,ownerWallet,sig.signature).run();
     indexed++;
     walletIndexed++;
     } catch (error) {
       await DB.prepare("UPDATE td_match_index_queue SET status='retry',attempts=attempts+1,last_error=?,updated_at=datetime('now') WHERE match_id=? AND wallet=? AND signature=?")
-        .bind(error instanceof Error ? error.message.slice(0,300) : "unknown_indexing_error",match.id,trackedWallet,sig.signature).run();
+        .bind(error instanceof Error ? error.message.slice(0,300) : "unknown_indexing_error",match.id,ownerWallet,sig.signature).run();
     }
   }
   // Capture portfolio valuations close to the start and after the deadline. These are
@@ -692,13 +702,13 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
   const nowSec = Math.floor(Date.now() / 1000);
   // Capture start evidence during a wider two-minute startup window to tolerate room-load/RPC latency.
   // The actual observed_at timestamp is retained and settlement still enforces its boundary tolerance.
-  const existingStart = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = 'start'").bind(match.id,trackedWallet).first<{id:number}>();
-  const existingEnd = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = 'end'").bind(match.id,trackedWallet).first<{id:number}>();
+  const existingStart = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = 'start'").bind(match.id,ownerWallet).first<{id:number}>();
+  const existingEnd = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = 'end'").bind(match.id,ownerWallet).first<{id:number}>();
   // Capture a baseline on the first available sync if the start window was missed.
   // Its real timestamp is retained; reconciliation will block official scoring when it is outside the start boundary.
   const phase = !existingStart && match.started_at ? "start" : nowSec >= end && !existingEnd ? "end" : null;
   if (phase) {
-    const existingSnapshot = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = ?").bind(match.id,trackedWallet,phase).first<{id:number}>();
+    const existingSnapshot = await DB.prepare("SELECT id FROM td_match_valuations WHERE match_id = ? AND wallet = ? AND phase = ?").bind(match.id,ownerWallet,phase).first<{id:number}>();
     if (!existingSnapshot) {
       const balance = await rpcCall("getBalance",[trackedWallet,{commitment:"confirmed"}]) as {value:number};
       const [classicAccounts, token2022Accounts] = await Promise.all([
@@ -727,28 +737,38 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
         const accepted = price !== null && liquidity !== null && liquidity >= 100;
         const reason = accepted ? "Latest DexScreener spot quote passed the configured $100 minimum liquidity threshold; not a historical quote." : "No quote passed the configured price/liquidity checks.";
         await DB.prepare("INSERT OR IGNORE INTO td_match_price_evidence (match_id,wallet,phase,mint,price_usd,liquidity_usd,source,observed_at,quote_kind,accepted,reason) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-          .bind(match.id,trackedWallet,phase,mint,price,liquidity,"dexscreener_tokens_v1",nowSec,"observed_spot",accepted?1:0,reason).run();
+          .bind(match.id,ownerWallet,phase,mint,price,liquidity,"dexscreener_tokens_v1",nowSec,"observed_spot",accepted?1:0,reason).run();
       }
       const unpricedMints = tokenValues.filter((entry)=>entry.valueUsd===null).length;
       const complete = solPrice !== undefined && unpricedMints===0 && tokenBalances.length <= 29;
       // Partial estimate for the live UI; complete remains false whenever any held asset is unpriced.
       const pricedTokenValue = tokenValues.reduce((sum,entry)=>sum+(entry.valueUsd??0),0);
       const portfolioUsd = solPrice !== undefined || tokenValues.some(entry=>entry.valueUsd!==null) ? (solPrice !== undefined ? balance.value/1e9*solPrice : 0) + pricedTokenValue : null;
-      await DB.prepare("INSERT OR IGNORE INTO td_match_valuations (match_id,wallet,phase,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(match.id,trackedWallet,phase,nowSec,balance.value/1e9,portfolioUsd,JSON.stringify(tokenValues),tokenValues.length-unpricedMints,unpricedMints,complete?1:0,complete?"Portfolio priced by DexScreener liquidity-selected token pairs; external transfers and all eligibility rules still require independent reconciliation.":"Incomplete portfolio valuation: one or more token balances or SOL could not be priced reliably.").run();
+      await DB.prepare("INSERT OR IGNORE INTO td_match_valuations (match_id,wallet,phase,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(match.id,ownerWallet,phase,nowSec,balance.value/1e9,portfolioUsd,JSON.stringify(tokenValues),tokenValues.length-unpricedMints,unpricedMints,complete?1:0,complete?"Portfolio priced by DexScreener liquidity-selected token pairs; external transfers and all eligibility rules still require independent reconciliation.":"Incomplete portfolio valuation: one or more token balances or SOL could not be priced reliably.").run();
     }
   }
-  const cursor = await DB.prepare("SELECT before_signature FROM td_match_index_state WHERE match_id=? AND wallet=?").bind(match.id,trackedWallet).first<{before_signature:string|null}>();
-  await DB.prepare("INSERT INTO td_wallet_sync_state (wallet,last_signature,last_synced_at) VALUES (?,?,datetime('now')) ON CONFLICT(wallet) DO UPDATE SET last_signature=excluded.last_signature,last_synced_at=datetime('now')").bind(trackedWallet,cursor?.before_signature ?? null).run();
+  const cursor = await DB.prepare("SELECT before_signature FROM td_match_index_state WHERE match_id=? AND wallet=?").bind(match.id,ownerWallet).first<{before_signature:string|null}>();
+  await DB.prepare("INSERT INTO td_wallet_sync_state (wallet,last_signature,last_synced_at) VALUES (?,?,datetime('now')) ON CONFLICT(wallet) DO UPDATE SET last_signature=excluded.last_signature,last_synced_at=datetime('now')").bind(ownerWallet,cursor?.before_signature ?? null).run();
   }
   // Record a fresh observation-time portfolio estimate on every sync, not only at
   // match start/end. Current DexScreener quotes are explicitly spot observations;
   // this creates a sampled series, never a claim of historical pricing between syncs.
   const observationAt = Math.floor(Date.now() / 1000);
-  for (const trackedWallet of participants) {
+  for (const ownerWallet of participants) {
+  // Resolve the verified execution wallet, while keeping persisted records keyed
+  // to the authenticated player wallet used by match membership and the UI.
+  let trackedWallet = ownerWallet;
+  try {
+    const linked = await DB.prepare("SELECT trading_wallet FROM td_trading_wallets WHERE owner_wallet = ?")
+      .bind(ownerWallet).first<{ trading_wallet: string }>();
+    if (linked?.trading_wallet && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(linked.trading_wallet)) trackedWallet = linked.trading_wallet;
+  } catch {
+    // Backward-compatible fallback for deployments without the wallet-link table.
+  }
     // Keep live portfolio values responsive without issuing duplicate quote/RPC work on every UI poll.
     // The room polls every three seconds; persist a fresh priced observation at most every five seconds per wallet.
     const latestObservation = await DB.prepare("SELECT observed_at FROM td_match_valuation_observations WHERE match_id = ? AND wallet = ? ORDER BY observed_at DESC LIMIT 1")
-      .bind(match.id, trackedWallet).first<{ observed_at: number }>();
+      .bind(match.id, ownerWallet).first<{ observed_at: number }>();
     if (latestObservation && observationAt - latestObservation.observed_at < 5) continue;
     const balance = await rpcCall("getBalance", [trackedWallet, { commitment: "confirmed" }]) as { value: number };
     const [classicAccounts, token2022Accounts] = await Promise.all([
@@ -895,7 +915,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       ? "Observation-time estimate using current DexScreener spot quotes passing a $100 liquidity floor. Not historical pricing, official P&L, or settlement evidence; transfers and token eligibility remain unresolved."
       : "Incomplete observation-time estimate: one or more assets lacked a qualifying current spot quote or token coverage exceeded the cap. Not historical pricing or settlement evidence.";
     await DB.prepare("INSERT OR IGNORE INTO td_match_valuation_observations (match_id,wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,integrity_note) VALUES (?,?,?,?,?,?,?,?,?,?)")
-      .bind(match.id, trackedWallet, observationAt, balance.value / 1e9, portfolioUsd, JSON.stringify(tokenValues), tokenValues.length - unpricedMints, unpricedMints, complete ? 1 : 0, note).run();
+      .bind(match.id, ownerWallet, observationAt, balance.value / 1e9, portfolioUsd, JSON.stringify(tokenValues), tokenValues.length - unpricedMints, unpricedMints, complete ? 1 : 0, note).run();
   }
   const observations = await DB.prepare("SELECT wallet,observed_at,sol_balance,portfolio_usd,token_balances_json,priced_mints,unpriced_mints,complete,source,integrity_note FROM td_match_valuation_observations WHERE match_id = ? ORDER BY observed_at DESC LIMIT 500").bind(match.id).all<{wallet:string;observed_at:number;sol_balance:number;portfolio_usd:number|null;token_balances_json:string;priced_mints:number;unpriced_mints:number;complete:number;source:string;integrity_note:string}>();
   const fillCandidates = await DB.prepare("SELECT wallet,signature,block_time,slot,token_mint,token_delta,sol_delta_net,estimated_token_price_sol,direction,parser,confidence,explanation FROM td_swap_fill_candidates WHERE match_id = ? ORDER BY block_time DESC LIMIT 100").bind(match.id).all<{wallet:string;signature:string;block_time:number|null;slot:number|null;token_mint:string;token_delta:number;sol_delta_net:number;estimated_token_price_sol:number|null;direction:string;parser:string;confidence:string;explanation:string}>();
