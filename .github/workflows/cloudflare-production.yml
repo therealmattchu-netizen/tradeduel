@@ -84,3 +84,5 @@ jobs:
 # Trigger production deployment for surrender-forfeit ELO handling.
 
 # Trigger production deployment after fixing surrender settlement syntax.
+
+# [deploy-production] Deploy newest-observation live scoring fix.
