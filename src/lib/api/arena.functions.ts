@@ -251,12 +251,12 @@ const PUBLIC_SOLANA_MAINNET_RPCS = [
 
 function solanaRpcEndpoints(): string[] {
   const configured = (bindings().SOLANA_RPC_URLS ?? bindings().SOLANA_RPC_URL ?? "")
-    .split(/[\s,;]+/).map(value => value.trim()).filter(Boolean);
-  const unique = [...new Set([...configured, ...PUBLIC_SOLANA_MAINNET_RPCS])];
-  // Rotate the first provider between requests so a throttled public endpoint
-  // does not receive every request first. Configured paid endpoints take priority.
-  const offset = Math.floor(Date.now() / 15000) % Math.max(unique.length, 1);
-  return [...unique.slice(offset), ...unique.slice(0, offset)];
+    .split(/[\\s,;]+/).map(value => value.trim()).filter(Boolean);
+  const primary = [...new Set(configured)];
+  const fallbacks = [...new Set(PUBLIC_SOLANA_MAINNET_RPCS.filter(url => !primary.includes(url)))];
+  // Keep configured provider URLs first on every request. Only rotate public fallbacks.
+  const offset = Math.floor(Date.now() / 15000) % Math.max(fallbacks.length, 1);
+  return [...primary, ...fallbacks.slice(offset), ...fallbacks.slice(0, offset)];
 }
 
 /** RPC failover: try configured providers first, then independent public fallbacks.
@@ -660,7 +660,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     // Observations are sampled at most once per minute per wallet and match.
     const latestObservation = await DB.prepare("SELECT observed_at FROM td_match_valuation_observations WHERE match_id = ? AND wallet = ? ORDER BY observed_at DESC LIMIT 1")
       .bind(match.id, trackedWallet).first<{ observed_at: number }>();
-    if (latestObservation && observationAt - latestObservation.observed_at < 60) continue;
+    if (latestObservation && observationAt - latestObservation.observed_at < 15) continue;
     const balance = await rpcCall("getBalance", [trackedWallet, { commitment: "confirmed" }]) as { value: number };
     const [classicAccounts, token2022Accounts] = await Promise.all([
       rpcCall("getTokenAccountsByOwner", [trackedWallet, { programId: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA" }, { encoding: "jsonParsed", commitment: "confirmed" }]) as Promise<ParsedTokenAccounts>,
@@ -670,7 +670,7 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       .map((entry) => ({ mint: entry.account.data.parsed.info.mint, amount: Number((entry.account.data.parsed.info.tokenAmount as { uiAmountString?: string; uiAmount?: number | null }).uiAmountString ?? entry.account.data.parsed.info.tokenAmount.uiAmount ?? 0) }))
       .filter((entry) => Number.isFinite(entry.amount) && entry.amount > 0);
     const mints = [...new Set(["So11111111111111111111111111111111111111112", ...tokenBalances.map((entry) => entry.mint)])].slice(0, 30);
-    let priceRows: Array<{ baseToken?: { address?: string }; priceUsd?: string; liquidity?: { usd?: number } }> = [];
+    let priceRows: Array<{ baseToken?: { address?: string; name?: string; symbol?: string }; priceUsd?: string; liquidity?: { usd?: number }; marketCap?: number; fdv?: number; url?: string }> = [];
     try {
       const response = await fetch(`https://api.dexscreener.com/tokens/v1/solana/${mints.join(",")}`);
       if (response.ok) priceRows = await response.json() as typeof priceRows;
@@ -690,6 +690,8 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     } catch { /* Preserve an incomplete observation when the quote source is unavailable. */ }
     const prices = new Map<string, number>();
     const liquidities = new Map<string, number>();
+    const marketCaps = new Map<string, number>();
+    const tokenNames = new Map<string, {name:string|null;symbol:string|null;pairUrl:string|null}>();
     for (const pair of priceRows) {
       const mint = pair.baseToken?.address;
       const price = Number(pair.priceUsd);
@@ -697,9 +699,11 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
       if (mint && Number.isFinite(price) && price > 0 && liquidity >= 100 && liquidity > (liquidities.get(mint) ?? 0)) {
         prices.set(mint, price);
         liquidities.set(mint, liquidity);
+        const cap=Number(pair.marketCap??pair.fdv??0); if(Number.isFinite(cap)&&cap>0)marketCaps.set(mint,cap);
+        tokenNames.set(mint,{name:pair.baseToken?.name??null,symbol:pair.baseToken?.symbol??null,pairUrl:pair.url??null});
       }
     }
-    const tokenValues = tokenBalances.map((entry) => ({ ...entry, priceUsd: prices.get(entry.mint) ?? null, valueUsd: prices.has(entry.mint) ? entry.amount * prices.get(entry.mint)! : null }));
+    const tokenValues = tokenBalances.map((entry) => ({ ...entry, ...(tokenNames.get(entry.mint)??{}), marketCapUsd:marketCaps.get(entry.mint)??null, priceUsd: prices.get(entry.mint) ?? null, valueUsd: prices.has(entry.mint) ? entry.amount * prices.get(entry.mint)! : null }));
     const solPrice = prices.get("So11111111111111111111111111111111111111112");
     const unpricedMints = tokenValues.filter((entry) => entry.valueUsd === null).length;
     const complete = solPrice !== undefined && unpricedMints === 0 && tokenBalances.length <= 29;
