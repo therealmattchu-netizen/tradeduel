@@ -922,8 +922,8 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
           } catch { /* Try the next public quote endpoint. */ }
         }
         if (!coin) return;
-        const usdCap = Number(coin.usd_market_cap ?? coin.market_cap_usd);
-        const quoteCap = Number(coin.market_cap_quote ?? coin.market_cap);
+        const usdCap = Number(coin.usd_market_cap ?? coin.market_cap_usd ?? coin.market_cap);
+        const quoteCap = Number(coin.market_cap_quote);
         const directPrice = Number(coin.price_usd ?? coin.priceUsd);
         const supply = Number(coin.circulating_supply ?? coin.circulating_supply_str ?? coin.total_supply ?? coin.total_supply_str ?? 1_000_000_000);
         const safeSupply = Number.isFinite(supply) && supply > 0 ? supply : 1_000_000_000;
