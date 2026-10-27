@@ -103,7 +103,7 @@ export function CustomMatchBrowser() {
     try {
       const cap=2;
       const effectiveMode="head_to_head_percentage";
-      const result=await createCustomMatch({data:{token,mode:effectiveMode as "head_to_head"|"head_to_head_percentage"|"duo"|"group",visibility,maxPlayers:cap,durationSeconds:duration,password:visibility==="private"?password:undefined}});
+      const result=await createCustomMatch({data:{token,mode:"head_to_head_percentage",visibility,maxPlayers:cap,durationSeconds:duration,password:visibility==="private"?password:undefined}});
       await refresh();
       const found=matches.find(m=>m.id===result.matchId);
       setSelected({id:result.matchId,creator_wallet:"",mode:effectiveMode,visibility,max_players:cap,duration_seconds:duration,status:"open",created_at:new Date().toISOString(),players_count:1,...found});
