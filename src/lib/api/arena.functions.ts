@@ -625,8 +625,8 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
     const pumpRelated = allInstructions.some((ix:any)=>resolveInstructionProgramId(ix, keys, tx.meta?.loadedAddresses) === "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P" || ix.program === "pump");
     const logMessages: string[] = tx.meta.logMessages ?? [];
     const pumpInstructionNames = logMessages.filter((line) => line.includes("Program log: Instruction:")).map((line) => line.split("Program log: Instruction:")[1]?.trim().toLowerCase() ?? "");
-    const isBuy = pumpRelated && pumpInstructionNames.some((name) => name === "buy" || name === "buy_exact_sol_in");
-    const isSell = pumpRelated && pumpInstructionNames.some((name) => name === "sell");
+    const isBuy = pumpRelated && pumpInstructionNames.some((name) => /^buy(?:_|$)/.test(name));
+    const isSell = pumpRelated && pumpInstructionNames.some((name) => /^sell(?:_|$)/.test(name));
     const index = keys.indexOf(trackedWallet);
     const preSol = index >= 0 ? Number(tx.meta.preBalances?.[index] ?? 0) : 0;
     const postSol = index >= 0 ? Number(tx.meta.postBalances?.[index] ?? 0) : 0;
