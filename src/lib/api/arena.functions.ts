@@ -1500,7 +1500,11 @@ export const getCustomMatchRematch = createServerFn({ method: "POST" })
     const {DB,wallet}=await requireSession(data.token);
     const member=await DB.prepare("SELECT wallet FROM td_custom_match_members WHERE match_id=? AND wallet=?").bind(data.matchId,wallet).first<{wallet:string}>();
     if(!member)throw new Error("Only players in this match can view rematch status.");
-    const row=await DB.prepare("SELECT requested_by,opponent_wallet,status,new_match_id,created_at FROM td_custom_match_rematches WHERE match_id=?").bind(data.matchId).first<any>();
+    let row=await DB.prepare("SELECT requested_by,opponent_wallet,status,new_match_id,created_at FROM td_custom_match_rematches WHERE match_id=?").bind(data.matchId).first<any>();
+    if(row?.status==="pending"&&row.created_at&&Date.now()-new Date(row.created_at+"Z").getTime()>120000){
+      await DB.prepare("UPDATE td_custom_match_rematches SET status='expired',updated_at=datetime('now') WHERE match_id=? AND status='pending'").bind(data.matchId).run();
+      row={...row,status:"expired"};
+    }
     return {rematch:row??null,viewerWallet:wallet};
   });
 
