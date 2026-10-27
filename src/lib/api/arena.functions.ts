@@ -1182,7 +1182,7 @@ export const reconcileCustomMatchSettlement = createServerFn({ method: "POST" })
     if((prices?.rejected??0)>0) blockers.push("one_or_more_historical_price_quotes_failed_quality_checks");
     const teamScore=(team:number)=>{const values=returns.filter(r=>r.team===team);return values.length>0&&values.every(r=>r.returnPct!==null)?values.reduce((sum,r)=>sum+(r.returnPct??0),0)/values.length:null;};
     const teamOne=teamScore(1),teamTwo=teamScore(2);
-    const status=blockers.length?"review_required":"verified";
+    const priorSettlement=await DB.prepare("SELECT elo_applied FROM td_custom_match_settlements WHERE match_id=?").bind(match.id).first<{elo_applied:number}>(); const status=priorSettlement?.elo_applied===1?"verified":blockers.length?"review_required":"verified";
     const unique=[...new Set(blockers)];
     const txCount=await DB.prepare("SELECT COUNT(*) AS count FROM td_match_accounting_ledger WHERE match_id=?").bind(match.id).first<{count:number}>();
     await DB.prepare("INSERT INTO td_custom_match_settlements (match_id,status,team_one_return_pct,team_two_return_pct,member_returns_json,blockers_json,indexed_transactions,updated_at) VALUES (?,?,?,?,?,?,?,datetime('now')) ON CONFLICT(match_id) DO UPDATE SET status=excluded.status,team_one_return_pct=excluded.team_one_return_pct,team_two_return_pct=excluded.team_two_return_pct,member_returns_json=excluded.member_returns_json,blockers_json=excluded.blockers_json,indexed_transactions=excluded.indexed_transactions,updated_at=datetime('now')")
