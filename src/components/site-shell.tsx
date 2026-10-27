@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { PlayerProfileMenu } from "@/components/player-profile-menu";
 
 export function SwordsMark({ size = 30 }: { size?: number }) {
-  return <img className="td-swords-mark" src="/brand-mark.svg" width={size} height={size} alt="" aria-hidden="true" />;
+  return <img className="td-swords-mark" src="/brand-mark-exact.png" width={size} height={size} alt="" aria-hidden="true" />;
 }
 
 export function SiteShell({ children, active }: { children: ReactNode; active?: string }) {
@@ -28,5 +28,5 @@ export function SiteShell({ children, active }: { children: ReactNode; active?: 
 }
 
 export function PageHero({ eyebrow, title, accent, description }: { eyebrow: string; title: string; accent?: string; description: string }) {
-  return <section className="td-page-hero"><div className="td-page-hero-copy"><p className="td-overline">{eyebrow}</p><h1>{title}{accent && <><br/><span>{accent}</span></>}</h1><p>{description}</p><div className="td-page-rule"><span/><span/><span/></div></div><div className="td-page-hero-visual" aria-hidden="true"><div className="td-page-hero-orbit td-page-hero-orbit-a"/><div className="td-page-hero-orbit td-page-hero-orbit-b"/><div className="td-page-hero-visual-mark"><img src="/brand-mark.svg" alt=""/></div><div className="td-page-hero-mini-chart">{Array.from({length:18},(_,i)=><i key={i} style={{"--bar-height":`${24+((i*17+11)%65)}%`} as any}/>)}</div><span className="td-page-hero-visual-label">TRADEDUEL · LIVE ARENA</span></div></section>;
+  return <section className="td-page-hero"><div className="td-page-hero-copy"><p className="td-overline">{eyebrow}</p><h1>{title}{accent && <><br/><span>{accent}</span></>}</h1><p>{description}</p><div className="td-page-rule"><span/><span/><span/></div></div><div className="td-page-hero-visual" aria-hidden="true"><div className="td-page-hero-orbit td-page-hero-orbit-a"/><div className="td-page-hero-orbit td-page-hero-orbit-b"/><div className="td-page-hero-visual-mark"><img src="/brand-mark-exact.png" alt=""/></div><div className="td-page-hero-mini-chart">{Array.from({length:18},(_,i)=><i key={i} style={{"--bar-height":`${24+((i*17+11)%65)}%`} as any}/>)}</div><span className="td-page-hero-visual-label">TRADEDUEL · LIVE ARENA</span></div></section>;
 }
