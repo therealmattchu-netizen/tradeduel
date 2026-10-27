@@ -1,0 +1,42 @@
+name: TradeDuel CI
+
+on:
+  push:
+    branches:
+      - main
+      - migration/cloudflare-audit
+      - fix/launch-readiness-wallet-ci-elo
+  pull_request:
+    branches:
+      - main
+      - migration/cloudflare-audit
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tradeduel-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: UI integrity checks
+        run: bun run check:ui
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Unit tests
+        run: bun test tests/*.test.ts
+      - name: Production build
+        run: bun run build
