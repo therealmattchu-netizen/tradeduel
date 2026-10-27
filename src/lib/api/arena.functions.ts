@@ -135,7 +135,7 @@ export const getMyRating = createServerFn({ method: "POST" }).validator(z.object
 export const getLeaderboard = createServerFn({ method: "GET" }).handler(async () => {
   const { DB } = bindings();
   if (!DB) return { players: [], verified: false };
-  const result = await DB.prepare("SELECT u.wallet, u.rating, u.wins, u.losses, u.draws FROM td_users u WHERE EXISTS (SELECT 1 FROM td_matches m WHERE m.verification_status = 'verified' AND m.status = 'completed' AND (m.player_one = u.wallet OR m.player_two = u.wallet)) OR EXISTS (SELECT 1 FROM td_custom_match_settlements s JOIN td_custom_match_members mm ON mm.match_id=s.match_id WHERE s.status='verified' AND s.elo_applied=1 AND mm.wallet=u.wallet) ORDER BY u.rating DESC, u.wins DESC LIMIT 100").all<{ wallet: string; rating: number; wins: number; losses: number; draws: number }>();
+  const result = await DB.prepare("SELECT u.wallet, u.rating, u.wins, u.losses, u.draws FROM td_users u WHERE LOWER(COALESCE(u.display_name, '')) NOT LIKE 'testdummy%' AND (EXISTS (SELECT 1 FROM td_matches m WHERE m.verification_status = 'verified' AND m.status = 'completed' AND (m.player_one = u.wallet OR m.player_two = u.wallet)) OR EXISTS (SELECT 1 FROM td_custom_match_settlements s JOIN td_custom_match_members mm ON mm.match_id=s.match_id WHERE s.status='verified' AND s.elo_applied=1 AND mm.wallet=u.wallet)) ORDER BY u.rating DESC, u.wins DESC LIMIT 100").all<{ wallet: string; rating: number; wins: number; losses: number; draws: number }>();
   return { players: result.results ?? [], verified: true };
 });
 
