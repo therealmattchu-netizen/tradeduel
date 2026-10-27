@@ -1867,9 +1867,29 @@ export const refreshLiveMatchPortfolio = createServerFn({ method: "POST" })
         try { const response=await fetch("https://api.dexscreener.com/tokens/v1/solana/"+mints.join(","),{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)}); if(response.ok)pairs=await response.json() as Pair[]; } catch {}
         const prices=new Map<string,number>(),liquidity=new Map<string,number>(),caps=new Map<string,number>(),names=new Map<string,{name:string|null;symbol:string|null;pairUrl:string|null}>();
         for(const pair of pairs){const mint=pair.baseToken?.address,price=Number(pair.priceUsd),liq=Number(pair.liquidity?.usd??0);if(mint&&price>0&&Number.isFinite(price)&&liq>=25&&liq>(liquidity.get(mint)??0)){prices.set(mint,price);liquidity.set(mint,liq);const cap=Number(pair.marketCap??pair.fdv??0);if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);names.set(mint,{name:pair.baseToken?.name??null,symbol:pair.baseToken?.symbol??null,pairUrl:pair.url??null});}}
-        const missing=tokenBalances.map(t=>t.mint).filter(mint=>!prices.has(mint)).slice(0,5);
-        await Promise.all(missing.map(async mint=>{try{const response=await fetch("https://frontend-api-v3.pump.fun/coins-v2/"+encodeURIComponent(mint),{headers:{accept:"application/json"},signal:AbortSignal.timeout(1800)});if(!response.ok)return;const coin=await response.json() as {name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;price_usd?:number|string};const cap=Number(coin.usd_market_cap??coin.market_cap_usd);if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);if(!names.has(mint)&&(coin.name||coin.symbol))names.set(mint,{name:coin.name??null,symbol:coin.symbol??null,pairUrl:"https://pump.fun/coin/"+mint});const direct=Number(coin.price_usd);if(direct>0&&Number.isFinite(direct))prices.set(mint,direct);else if(cap>0&&Number.isFinite(cap))prices.set(mint,cap/1_000_000_000);}catch{}}));
-        if(!prices.has(wrappedSol)){try{const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+wrappedSol,{headers:{accept:"application/json"},signal:AbortSignal.timeout(1800)});if(response.ok){const body=await response.json() as {pairs?:Pair[]};const best=(body.pairs??[]).filter(p=>p.baseToken?.address===wrappedSol&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];if(best)prices.set(wrappedSol,Number(best.priceUsd));}}catch{}}
+        const missing=tokenBalances.map(t=>t.mint).filter(mint=>!prices.has(mint)).slice(0,8);
+        await Promise.all(missing.map(async mint=>{try{
+          let coin:{name?:string;symbol?:string;usd_market_cap?:number|string;market_cap_usd?:number|string;market_cap?:number|string;price_usd?:number|string}|null=null;
+          for(const endpoint of ["https://frontend-api-v3.pump.fun/coins-v2/"+encodeURIComponent(mint),"https://frontend-api-v3.pump.fun/coins/"+encodeURIComponent(mint)+"?sync=true"]){
+            try{const response=await fetch(endpoint,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});if(response.ok){coin=await response.json() as typeof coin;if(coin)break;}}catch{}
+          }
+          if(!coin)return;
+          const cap=Number(coin.usd_market_cap??coin.market_cap_usd??coin.market_cap);
+          if(cap>0&&Number.isFinite(cap))caps.set(mint,cap);
+          if(!names.has(mint)&&(coin.name||coin.symbol))names.set(mint,{name:coin.name??null,symbol:coin.symbol??null,pairUrl:"https://pump.fun/coin/"+mint});
+          const direct=Number(coin.price_usd);
+          if(direct>0&&Number.isFinite(direct))prices.set(mint,direct);
+          else if(cap>0&&Number.isFinite(cap))prices.set(mint,cap/1_000_000_000);
+        }catch{}}));
+        if(!prices.has(wrappedSol)){try{
+          const response=await fetch("https://api.dexscreener.com/latest/dex/tokens/"+wrappedSol,{headers:{accept:"application/json"},signal:AbortSignal.timeout(2200)});
+          if(response.ok){const body=await response.json() as {pairs?:Array<Pair&{quoteToken?:{address?:string};priceNative?:string}>};
+            const liquid=(body.pairs??[]).filter(p=>Number(p.liquidity?.usd??0)>=100);
+            const direct=liquid.filter(p=>p.baseToken?.address===wrappedSol&&Number(p.priceUsd)>0).sort((a,b)=>Number(b.liquidity?.usd??0)-Number(a.liquidity?.usd??0))[0];
+            if(direct)prices.set(wrappedSol,Number(direct.priceUsd));
+            else {const inverse=liquid.filter(p=>p.quoteToken?.address===wrappedSol&&Number(p.priceUsd)>0&&Number(p.priceNative)>0).map(p=>({price:Number(p.priceUsd)/Number(p.priceNative),liquidity:Number(p.liquidity?.usd??0)})).filter(p=>Number.isFinite(p.price)&&p.price>0).sort((a,b)=>b.liquidity-a.liquidity)[0];if(inverse)prices.set(wrappedSol,inverse.price);}
+          }
+        }catch{}}
         const tokenValues=tokenBalances.map(t=>({...t,...(names.get(t.mint)??{}),priceUsd:prices.get(t.mint)??null,marketCapUsd:caps.get(t.mint)??null,liquidityUsd:liquidity.get(t.mint)??null,valueUsd:prices.has(t.mint)?t.amount*prices.get(t.mint)!:null}));
         const solPrice=prices.get(wrappedSol),unpriced=tokenValues.filter(t=>t.valueUsd===null).length;
         const complete=solPrice!==undefined&&unpriced===0&&tokenBalances.length<=29;
