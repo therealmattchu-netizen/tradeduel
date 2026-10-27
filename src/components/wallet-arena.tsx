@@ -130,21 +130,26 @@ export function WalletArena({ authOnly = false }: { authOnly?: boolean } = {}) {
     let alive = true;
     void loadMatches(token);
     void loadRating(token);
-    // Restore the server-side queue state when a saved wallet session returns,
-    // including after a page refresh. The queue row may still be waiting/matched
-    // even though the component's local state has reset to idle.
-    void getQueueStatus({ data: { token } }).then((result) => {
+    // Retire the legacy practice queue for returning sessions. Existing matched
+    // records remain visible in history, but new matches should use public/private lobbies.
+    void getQueueStatus({ data: { token } }).then(async (result) => {
       if (!alive) return;
-      setQueueStatus(result.status);
-      if (result.status === "waiting") setNotice("You're still in the matchmaking queue.");
-      else if (result.status === "matched") setNotice("Opponent found. Competitive test match started; official ELO is not active yet.");
+      if (result.status === "waiting") {
+        try { await leaveMatchmakingQueue({ data: { token } }); } catch { /* best-effort cleanup of a retired queue entry */ }
+        if (!alive) return;
+        setQueueStatus("idle");
+        setNotice("The legacy queue has been retired. Use public or private match lobbies.");
+      } else {
+        setQueueStatus(result.status === "matched" ? "matched" : "idle");
+        if (result.status === "matched") setNotice("This is a legacy unranked match. Use public or private lobbies for current matches.");
+      }
     }).catch(() => { /* expired sessions are handled when the user takes an action */ });
     return () => { alive = false; };
   }, [token, loadMatches, loadRating]);
   useEffect(() => {
     if (!token || queueStatus !== "waiting") return;
     let alive = true;
-    const poll = async () => { try { const result = await getQueueStatus({ data: { token } }); if (!alive) return; const wasWaiting = queueStatus === "waiting"; setQueueStatus(result.status); if (result.status === "matched") { setNotice("Opponent found. Competitive test match started; official ELO is not active yet."); if (wasWaiting) announceMatchFound(); await loadMatches(token); } } catch { /* retry on next poll */ } };
+    const poll = async () => { try { const result = await getQueueStatus({ data: { token } }); if (!alive) return; const wasWaiting = queueStatus === "waiting"; setQueueStatus(result.status); if (result.status === "matched") { setNotice("Legacy queue match detected. This format is unranked; use public/private lobbies for current matches."); if (wasWaiting) announceMatchFound(); await loadMatches(token); } } catch { /* retry on next poll */ } };
     void poll(); const interval = window.setInterval(() => void poll(), 5000);
     return () => { alive = false; window.clearInterval(interval); };
   }, [token, queueStatus, loadMatches]);
@@ -328,6 +333,6 @@ export function WalletArena({ authOnly = false }: { authOnly?: boolean } = {}) {
     </div>}
     {!authOnly && wallet && <div className="td-legacy-queue-retired" role="status" style={{marginTop:"18px",padding:"16px",border:"1px solid rgba(167,139,250,0.28)",borderRadius:"12px"}}><strong>Legacy matchmaking queue retired</strong><p style={{margin:"8px 0 0",fontSize:"13px",color:"#c9c4d8"}}>Use the public match browser or create a private lobby to enter the current match flow.</p><Link className="td-match-open-link" to="/matchmaking">Open current matchmaking ↗</Link></div>}
     <p className="td-wallet-notice" role="status">{notice}</p>
-    {!authOnly && matches.length > 0 && <div className="td-my-matches"><span className="td-mini-label">YOUR MATCH HISTORY</span>{matches.map((match) => <div className="td-my-match" key={match.id}><span><strong>{shortWallet(match.player_one)}</strong> <em>vs</em> <strong>{match.player_two ? shortWallet(match.player_two) : "Waiting for opponent"}</strong></span><span className="td-status-pill">{match.status.toUpperCase()}</span><small>{match.verification_status === "verified" ? "Verified" : "Unverified match · ELO not active"}</small><Link className="td-match-open-link" to="/match/$matchId" params={{matchId:match.id}}>Open match ↗</Link></div>)}</div>}
+    {!authOnly && matches.length > 0 && <div className="td-my-matches"><span className="td-mini-label">YOUR MATCH HISTORY</span>{matches.map((match) => <div className="td-my-match" key={match.id}><span><strong>{shortWallet(match.player_one)}</strong> <em>vs</em> <strong>{match.player_two ? shortWallet(match.player_two) : "Waiting for opponent"}</strong></span><span className="td-status-pill">{match.status.toUpperCase()}</span><small>{match.verification_status === "verified" ? "Verified" : "Legacy match · unranked"}</small><Link className="td-match-open-link" to="/match/$matchId" params={{matchId:match.id}}>Open match ↗</Link></div>)}</div>}
   </div>;
 }
