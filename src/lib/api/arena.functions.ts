@@ -750,6 +750,35 @@ export const syncMatchActivity = createServerFn({ method: "POST" }).validator(z.
         if (mint && Number.isFinite(price) && price > 0 && liquidity >= 100 && liquidity > (liquidityByMint.get(mint) ?? 0)) { priceByMint.set(mint,price); liquidityByMint.set(mint,liquidity); const cap=Number(pair.marketCap ?? pair.fdv ?? 0); if(Number.isFinite(cap)&&cap>0) marketCapByMint.set(mint,cap); }
       }
       const solPrice = priceByMint.get("So11111111111111111111111111111111111111112");
+      // Start snapshots must use the same fallback quote sources as live observations.
+      // Otherwise a bonding-curve token can be visible live but make the start baseline
+      // permanently incomplete simply because DexScreener has not indexed its pool yet.
+      const startPumpMints = tokenBalances.filter(entry => !priceByMint.has(entry.mint)).map(entry => entry.mint).slice(0, 8);
+      await Promise.all(startPumpMints.map(async mint => {
+        try {
+          const endpoints = [
+            "https://frontend-api-v3.pump.fun/coins-v2/" + encodeURIComponent(mint),
+            "https://frontend-api-v3.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
+            "https://frontend-api.pump.fun/coins/" + encodeURIComponent(mint) + "?sync=true",
+          ];
+          for (const endpoint of endpoints) {
+            const response = await fetch(endpoint, {headers:{accept:"application/json"},signal:AbortSignal.timeout(3500)});
+            if (!response.ok) continue;
+            const raw = await response.json() as any;
+            const coin = raw?.coin ?? raw?.data ?? raw;
+            const direct = Number(coin?.price_usd ?? coin?.priceUsd);
+            const cap = Number(coin?.usd_market_cap ?? coin?.market_cap_usd ?? coin?.market_cap);
+            const supply = Number(coin?.circulating_supply ?? coin?.circulating_supply_str ?? coin?.total_supply ?? coin?.total_supply_str ?? 1_000_000_000);
+            const price = Number.isFinite(direct) && direct > 0 ? direct : Number.isFinite(cap) && cap > 0 ? cap / (Number.isFinite(supply) && supply > 0 ? supply : 1_000_000_000) : null;
+            if (price !== null && Number.isFinite(price) && price > 0) {
+              priceByMint.set(mint,price);
+              const coinName = coin?.name ?? null, coinSymbol = coin?.symbol ?? null;
+              if (coinName || coinSymbol) { /* metadata is optional for the baseline */ }
+              break;
+            }
+          }
+        } catch { /* Preserve a partial baseline if no public quote is available. */ }
+      }));
       const tokenValues = tokenBalances.map((entry)=>({ ...entry, priceUsd:priceByMint.get(entry.mint) ?? null, marketCapUsd:marketCapByMint.get(entry.mint) ?? null, liquidityUsd:liquidityByMint.get(entry.mint) ?? null, valueUsd:priceByMint.has(entry.mint)?entry.amount*priceByMint.get(entry.mint)!:null }));
       for (const mint of mints) {
         const price = priceByMint.get(mint) ?? null;
