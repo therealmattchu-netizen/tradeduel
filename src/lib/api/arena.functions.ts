@@ -350,11 +350,11 @@ export const getWalletPortfolioEstimate = createServerFn({ method: "POST" })
     const unpricedMints = mints.filter(mint => !prices.has(mint));
     const tokenValueUsd = [...holdings.entries()].reduce((sum,[mint,amount])=>sum+amount*(prices.get(mint)??0),0);
     const balanceSol = balance.value / 1_000_000_000;
-    const complete = unpricedMints.length === 0 && (balanceSol === 0 || solPrice !== null);
+    const complete = holdings.size <= 30 && unpricedMints.length === 0 && (balanceSol === 0 || solPrice !== null);
     return {
       wallet, balanceSol, solPriceUsd: solPrice, tokenValueUsd,
       portfolioValueUsd: complete ? balanceSol * (solPrice ?? 0) + tokenValueUsd : null,
-      pricedTokens: prices.size, tokenCount: mints.length, unpricedTokens: unpricedMints.length,
+      pricedTokens: prices.size, tokenCount: holdings.size, unpricedTokens: unpricedMints.length + Math.max(0, holdings.size - mints.length),
       complete, updatedAt: new Date().toISOString(),
       disclaimer: "Estimated current holdings using public RPC balances and DexScreener spot prices. Not a cost basis, verified P&L, or official match result."
     };
