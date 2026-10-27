@@ -268,3 +268,71 @@ export function buildAccountingLedgerSummary(input: LedgerSummaryInput) {
     canCountAsVerifiedFill: false as const,
   };
 }
+
+
+export type SwapFillCandidateLike = {
+  wallet: string;
+  token_mint: string;
+  token_delta: number;
+  sol_delta_net: number;
+  direction: string;
+  block_time: number | null;
+  signature: string;
+};
+
+/**
+ * FIFO cost-basis estimate from observed buy/sell candidates.
+ * Candidates are heuristic, not confirmed protocol fills; never use this alone for ELO.
+ */
+export function summarizeEstimatedRealizedPnl(fills: SwapFillCandidateLike[]) {
+  type Lot = { remainingTokens: number; costPerTokenSol: number };
+  type Summary = { wallet: string; realizedPnlSol: number; matchedSellTokens: number; unmatchedSellTokens: number; matchedSellCount: number; blockers: string[] };
+  const lotsByWalletMint = new Map<string, Lot[]>();
+  const summaries = new Map<string, Summary>();
+  const ordered = [...fills]
+    .filter((fill) => fill.direction === "buy_candidate" || fill.direction === "sell_candidate")
+    .sort((a, b) => (a.block_time ?? Number.MAX_SAFE_INTEGER) - (b.block_time ?? Number.MAX_SAFE_INTEGER) || a.signature.localeCompare(b.signature));
+
+  for (const fill of ordered) {
+    const summary = summaries.get(fill.wallet) ?? {
+      wallet: fill.wallet, realizedPnlSol: 0, matchedSellTokens: 0, unmatchedSellTokens: 0, matchedSellCount: 0, blockers: [],
+    };
+    summaries.set(fill.wallet, summary);
+    const tokenAmount = Math.abs(fill.token_delta);
+    const solAmount = Math.abs(fill.sol_delta_net);
+    if (fill.block_time === null || !Number.isFinite(fill.block_time) || !Number.isFinite(tokenAmount) || tokenAmount <= 0 || !Number.isFinite(solAmount) || solAmount <= 0) {
+      summary.blockers.push("invalid_or_missing_fill_candidate_fields");
+      continue;
+    }
+    const key = fill.wallet + ":" + fill.token_mint;
+    const lots = lotsByWalletMint.get(key) ?? [];
+    lotsByWalletMint.set(key, lots);
+    if (fill.direction === "buy_candidate") {
+      lots.push({ remainingTokens: tokenAmount, costPerTokenSol: solAmount / tokenAmount });
+      continue;
+    }
+    let tokensToMatch = tokenAmount;
+    const proceedsPerToken = solAmount / tokenAmount;
+    let costMatched = 0;
+    let matched = 0;
+    for (const lot of lots) {
+      if (tokensToMatch <= 1e-12) break;
+      if (lot.remainingTokens <= 1e-12) continue;
+      const quantity = Math.min(tokensToMatch, lot.remainingTokens);
+      costMatched += quantity * lot.costPerTokenSol;
+      matched += quantity;
+      lot.remainingTokens -= quantity;
+      tokensToMatch -= quantity;
+    }
+    summary.realizedPnlSol += matched * proceedsPerToken - costMatched;
+    summary.matchedSellTokens += matched;
+    summary.unmatchedSellTokens += Math.max(0, tokenAmount - matched);
+    if (matched > 0) summary.matchedSellCount += 1;
+    if (tokensToMatch > 1e-12) summary.blockers.push("sell_quantity_exceeds_tracked_buy_lots");
+  }
+  return [...summaries.values()].map((summary) => ({
+    ...summary,
+    status: "provisional_candidate_estimate" as const,
+    blockers: [...new Set(summary.blockers)],
+  }));
+}
